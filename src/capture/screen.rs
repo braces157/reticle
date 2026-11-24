@@ -132,7 +132,13 @@ impl VirtualScreenCapture {
     /// Converts the full virtual desktop capture from BGRA to opaque RGBA for GPU upload.
     pub fn to_rgba(&self) -> Vec<u8> {
         let mut rgba = vec![0u8; self.bgra.len()];
-        for (src, dst) in self.bgra.chunks_exact(4).zip(rgba.chunks_exact_mut(4)) {
+        for (src, dst) in self
+            .bgra
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(rgba.as_chunks_mut::<4>().0.iter_mut())
+        {
             dst[0] = src[2];
             dst[1] = src[1];
             dst[2] = src[0];
@@ -162,7 +168,7 @@ impl VirtualScreenCapture {
         for row in 0..crop_h {
             let src_row_start = ((rel_y + row) * full_w + rel_x) * 4;
             let src_slice = &self.bgra[src_row_start..src_row_start + crop_w * 4];
-            for px in src_slice.chunks_exact(4) {
+            for px in src_slice.as_chunks::<4>().0 {
                 rgba.push(px[2]); // R
                 rgba.push(px[1]); // G
                 rgba.push(px[0]); // B
@@ -438,7 +444,7 @@ mod tests {
         let h = 20;
         let mut bgra = vec![0u8; w * h * 4];
         // Fill with BGR = (10, 20, 30) -> RGB = (30, 20, 10)
-        for px in bgra.chunks_exact_mut(4) {
+        for px in bgra.as_chunks_mut::<4>().0 {
             px[0] = 10;
             px[1] = 20;
             px[2] = 30;

@@ -94,7 +94,7 @@ fn average_luma(img: &RgbaImage) -> f32 {
     let step = (raw.len() / 4 / 2048).max(1);
     let mut sum = 0.0f64;
     let mut count = 0u64;
-    for px in raw.chunks_exact(4).step_by(step) {
+    for px in raw.as_chunks::<4>().0.iter().step_by(step) {
         let luma = 0.299 * px[0] as f64 + 0.587 * px[1] as f64 + 0.114 * px[2] as f64;
         sum += luma;
         count += 1;
@@ -258,7 +258,7 @@ fn rgba_to_software_bitmap(img: &RgbaImage) -> Result<SoftwareBitmap, OcrError> 
     let width = img.width() as i32;
     let height = img.height() as i32;
     let mut bgra = Vec::with_capacity((width as usize) * (height as usize) * 4);
-    for px in img.as_raw().chunks_exact(4) {
+    for px in img.as_raw().as_chunks::<4>().0 {
         bgra.push(px[2]); // B
         bgra.push(px[1]); // G
         bgra.push(px[0]); // R
@@ -512,7 +512,7 @@ pub(crate) mod tests {
             ReleaseDC(None, screen_dc);
 
             let mut rgba = Vec::with_capacity(bgra.len());
-            for px in bgra.chunks_exact(4) {
+            for px in bgra.as_chunks::<4>().0 {
                 rgba.push(px[2]);
                 rgba.push(px[1]);
                 rgba.push(px[0]);
