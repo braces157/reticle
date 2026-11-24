@@ -42,7 +42,6 @@ impl TrayController {
     }
 }
 
-/// Generates a crisp 32x32 RGBA Reticle tray icon (matte obsidian squircle + white brackets + optical blue focal dot).
 pub fn build_tray_icon() -> Icon {
     let size = 32usize;
     let mut rgba = vec![0u8; size * size * 4];
@@ -59,7 +58,6 @@ pub fn build_tray_icon() -> Icon {
     let white = [255, 255, 255, 255];
     let focal_blue = [58, 169, 255, 255];
 
-    // Rounded squircle background
     for y in 1..31 {
         for x in 1..31 {
             let corner = !(6..26).contains(&x) && !(6..26).contains(&y);
@@ -75,31 +73,25 @@ pub fn build_tray_icon() -> Icon {
         }
     }
 
-    // Crisp white viewfinder corner brackets
     for offset in 0..6 {
-        // Top-left
         set_px(&mut rgba, 7 + offset, 7, white);
         set_px(&mut rgba, 7 + offset, 8, white);
         set_px(&mut rgba, 7, 7 + offset, white);
         set_px(&mut rgba, 8, 7 + offset, white);
-        // Top-right
         set_px(&mut rgba, 24 - offset, 7, white);
         set_px(&mut rgba, 24 - offset, 8, white);
         set_px(&mut rgba, 24, 7 + offset, white);
         set_px(&mut rgba, 23, 7 + offset, white);
-        // Bottom-left
         set_px(&mut rgba, 7 + offset, 24, white);
         set_px(&mut rgba, 7 + offset, 23, white);
         set_px(&mut rgba, 7, 24 - offset, white);
         set_px(&mut rgba, 8, 24 - offset, white);
-        // Bottom-right
         set_px(&mut rgba, 24 - offset, 24, white);
         set_px(&mut rgba, 24 - offset, 23, white);
         set_px(&mut rgba, 24, 24 - offset, white);
         set_px(&mut rgba, 23, 24 - offset, white);
     }
 
-    // Optical blue center focal dot (4x4 rounded)
     for y in 14..18 {
         for x in 14..18 {
             set_px(&mut rgba, x, y, focal_blue);
@@ -297,7 +289,6 @@ pub fn spawn_tray_and_hotkey_thread(
                 }
             }));
 
-            // Left-click on tray icon directly triggers interactive snip (right-click opens menu).
             let click_ui_tx = ui_tx.clone();
             let click_egui_slot = Arc::clone(&egui_slot);
             TrayIconEvent::set_event_handler(Some(move |event: TrayIconEvent| {
@@ -312,7 +303,6 @@ pub fn spawn_tray_and_hotkey_thread(
                 }
             }));
 
-            // Global hotkey callback
             let hk_ui_tx = ui_tx.clone();
             let hk_egui_slot = Arc::clone(&egui_slot);
             let hk_id_slot = Arc::clone(&active_hotkey_id);
@@ -337,7 +327,6 @@ pub fn spawn_tray_and_hotkey_thread(
                 }
             }));
 
-            // Standard Win32 message pump for tray-icon + global-hotkey
             let mut msg = MSG::default();
             // SAFETY: Standard Win32 message loop for the tray thread.
             unsafe {
@@ -382,7 +371,6 @@ pub fn spawn_tray_and_hotkey_thread(
                 }
             }
 
-            // Cleanly unregister handlers before thread exits.
             TrayIconEvent::set_event_handler::<fn(TrayIconEvent)>(None);
             MenuEvent::set_event_handler::<fn(MenuEvent)>(None);
             GlobalHotKeyEvent::set_event_handler::<fn(GlobalHotKeyEvent)>(None);

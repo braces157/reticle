@@ -19,7 +19,6 @@ impl SseLineDecoder {
         let mut lines = Vec::new();
         while let Some(pos) = self.buf.iter().position(|&b| b == b'\n') {
             let mut raw: Vec<u8> = self.buf.drain(..=pos).collect();
-            // Strip trailing '\n' and optional '\r'
             if raw.last() == Some(&b'\n') {
                 raw.pop();
             }
@@ -236,7 +235,6 @@ mod tests {
     #[test]
     fn decoder_handles_split_chunks_crlf_and_utf8() {
         let mut dec = SseLineDecoder::default();
-        // Split a multi-byte Vietnamese UTF-8 character across chunks
         let payload = "data: {\"choices\":[{\"delta\":{\"content\":\"Xin chào\"}}]}\r\n\r\n";
         let bytes = payload.as_bytes();
         let mid = bytes.len() / 2;

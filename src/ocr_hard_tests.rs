@@ -100,7 +100,6 @@ fn hard_02_tiny_low_contrast_terminal_logs_extract_paths_levels_and_numbers() {
         ],
         0.90,
     );
-    // Verify bbox line reconstruction kept ERROR + byok_ai.rs on the exact same row
     assert!(
         text.lines()
             .any(|l| l.contains("ERROR") && l.to_ascii_lowercase().contains("byok_ai.rs")),
@@ -255,7 +254,6 @@ fn hard_08_bbox_line_reconstructor_merges_columns_and_preserves_sentence_spacing
     assert_eq!(fix_slashed_zero_artifacts("exit=Ø"), "exit=0");
     assert_eq!(fix_slashed_zero_artifacts("Øslo"), "Øslo");
 
-    // Simulate column-shuffled words from 2 visual rows + tight :: / . + normal English sentence
     let words = vec![
         OcrWordBox { text: "Done.".into(), x: 10.0, y: 40.0, width: 40.0, height: 16.0 },
         OcrWordBox { text: "Next".into(), x: 56.0, y: 40.0, width: 34.0, height: 16.0 },

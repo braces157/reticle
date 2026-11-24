@@ -203,7 +203,6 @@ fn draw_rect_stroke(
         let fy = y as f32 + 0.5;
         for x in min_x..=max_x {
             let fx = x as f32 + 0.5;
-            // Signed distance to rectangle boundary
             let dx = (x1 - fx).max(0.0).max(fx - x2);
             let dy = (y1 - fy).max(0.0).max(fy - y2);
             let outside_dist = (dx * dx + dy * dy).sqrt();
@@ -335,7 +334,6 @@ fn draw_filled_triangle(
         return;
     }
 
-    // 2x2 subpixel supersampling for smooth anti-aliased triangle edges
     const OFFSETS: [(f32, f32); 4] = [(0.25, 0.25), (0.75, 0.25), (0.25, 0.75), (0.75, 0.75)];
     for y in min_y..=max_y {
         for x in min_x..=max_x {
@@ -361,7 +359,6 @@ fn draw_filled_triangle(
     }
 }
 
-/// Renders anti-aliased Unicode text via native Windows Segoe UI GDI mask and alpha-blends it onto `cropped`.
 fn draw_text_gdi(
     cropped: &mut CroppedImage,
     x: i32,
@@ -468,7 +465,6 @@ fn draw_text_gdi(
             let _ = DeleteObject(HGDIOBJ(bmp.0));
 
             if got > 0 {
-                // Soft dark drop shadow first, then foreground color
                 for py in 0..th {
                     for px in 0..tw {
                         let cov = mask[((py as usize) * (tw as usize) + (px as usize)) * 4 + 2]
@@ -533,7 +529,6 @@ mod tests {
     #[test]
     fn mosaic_averages_pixels_irreversibly() {
         let mut crop = solid_crop(16, 16, [0, 0, 0, 255]);
-        // Paint half white, half black inside 0..8 x 0..8
         for y in 0..8 {
             for x in 0..4 {
                 let idx = (y * 16 + x) * 4;
@@ -551,10 +546,8 @@ mod tests {
             block_size: 8,
         });
         composite_annotations(&mut crop, &doc);
-        // Average of half [200,100,40] and half [0,0,0] = [100,50,20]
         assert_eq!(&crop.rgba[0..4], &[100, 50, 20, 255]);
         assert_eq!(&crop.rgba[(7 * 16 + 7) * 4..(7 * 16 + 7) * 4 + 4], &[100, 50, 20, 255]);
-        // Outside mosaic stays untouched
         assert_eq!(&crop.rgba[(12 * 16 + 12) * 4..(12 * 16 + 12) * 4 + 4], &[0, 0, 0, 255]);
     }
 
@@ -583,15 +576,12 @@ mod tests {
 
         composite_annotations(&mut crop, &doc);
 
-        // Rect top-left border pixel (10, 10) should now have strong red channel
         let rect_idx = (10 * 120 + 10) * 4;
         assert!(crop.rgba[rect_idx] > 200, "expected red rect border");
 
-        // Arrow shaft pixel (40, 60) should now have strong sky blue channel
         let arrow_idx = (60 * 120 + 40) * 4;
         assert!(crop.rgba[arrow_idx + 2] > 200, "expected sky arrow shaft");
 
-        // Text region (60..100, 10..34) should have brightened pixels from white text
         let text_lit = (10..34)
             .flat_map(|y| (60..100).map(move |x| (x, y)))
             .any(|(x, y)| crop.rgba[(y * 120 + x) * 4] > 180);

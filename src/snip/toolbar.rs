@@ -47,7 +47,6 @@ pub fn render_snip_toolbar(ui: &mut egui::Ui, state: &ToolbarViewState) -> Optio
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing = Vec2::new(4.0, 5.0);
 
-                // Row 1: Annotation tools + Undo/Redo + Output actions
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing = Vec2::new(3.0, 0.0);
 
@@ -104,7 +103,6 @@ pub fn render_snip_toolbar(ui: &mut egui::Ui, state: &ToolbarViewState) -> Optio
                     }
                 });
 
-                // Row 2: Contextual style bar (only shown when a drawing tool is active)
                 if let Some(tool) = state.active_tool {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing = Vec2::new(5.0, 0.0);
@@ -269,7 +267,6 @@ fn undo_redo_btn(ui: &mut egui::Ui, is_undo: bool, enabled: bool, tooltip: &str)
     let c = rect.center();
     let s = Stroke::new(1.5, fg);
     if is_undo {
-        // Left-pointing curved-style arrow
         painter.line_segment([c + Vec2::new(-4.5, -1.5), c + Vec2::new(3.5, -1.5)], s);
         painter.line_segment([c + Vec2::new(3.5, -1.5), c + Vec2::new(3.5, 3.5)], s);
         painter.line_segment([c + Vec2::new(-4.5, -1.5), c + Vec2::new(-1.5, -4.5)], s);

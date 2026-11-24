@@ -39,7 +39,6 @@ export function initOscilloscope(): void {
     const h = r.height || 44;
     ctx.clearRect(0, 0, w, h);
 
-    // Local Win32 GDI + OCR compute curve
     ctx.beginPath();
     for (let i = 0; i < samples.length; i++) {
       const x = (i / (samples.length - 1)) * w;
@@ -51,7 +50,6 @@ export function initOscilloscope(): void {
     ctx.lineWidth = 1.5;
     ctx.stroke();
 
-    // Outbound network line — permanently dead-flat at 0 KB/s
     ctx.beginPath();
     ctx.moveTo(0, h - 6);
     ctx.lineTo(w, h - 6);
@@ -71,7 +69,6 @@ export function initOscilloscope(): void {
     const dt = lastTime ? Math.min((now - lastTime) / 1000, 0.05) : 1 / 60;
     lastTime = now;
 
-    // Sample at a steady 60Hz regardless of monitor refresh rate
     accum += dt;
     while (accum >= 1 / 60) {
       samples.shift();

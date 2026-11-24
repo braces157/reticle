@@ -5,46 +5,40 @@ use egui::{
 use std::path::Path;
 use std::sync::Arc;
 
-// Precision toolmaker obsidian palette (achromatic tonal steps + inverted-ink CTAs)
-pub const BG_WINDOW: Color32 = Color32::from_rgb(10, 10, 10); // #0A0A0A matte obsidian
-pub const BG_HEADER: Color32 = Color32::from_rgb(14, 14, 14); // #0E0E0E quiet top rail
-pub const BG_CARD: Color32 = Color32::from_rgb(18, 18, 18); // #121212 elevated surface
-pub const BG_FOOTER: Color32 = Color32::from_rgb(12, 12, 12); // #0C0C0C recessed bottom dock
-pub const BG_SEGMENT_TRACK: Color32 = Color32::from_rgb(20, 20, 20); // #141414 pill track
-pub const BG_PILL: Color32 = Color32::from_rgb(26, 26, 26); // #1A1A1A resting well
-pub const BG_PILL_HOVER: Color32 = Color32::from_rgb(36, 36, 36); // #242424 hover lift
-pub const BG_PILL_ACTIVE: Color32 = Color32::from_rgb(44, 44, 44); // #2C2C2C active thumb
+pub const BG_WINDOW: Color32 = Color32::from_rgb(10, 10, 10);
+pub const BG_HEADER: Color32 = Color32::from_rgb(14, 14, 14);
+pub const BG_CARD: Color32 = Color32::from_rgb(18, 18, 18);
+pub const BG_FOOTER: Color32 = Color32::from_rgb(12, 12, 12);
+pub const BG_SEGMENT_TRACK: Color32 = Color32::from_rgb(20, 20, 20);
+pub const BG_PILL: Color32 = Color32::from_rgb(26, 26, 26);
+pub const BG_PILL_HOVER: Color32 = Color32::from_rgb(36, 36, 36);
+pub const BG_PILL_ACTIVE: Color32 = Color32::from_rgb(44, 44, 44);
 
-// Ink-alpha hairlines (whisper-quiet at rest, crisp on hover)
-pub const BORDER_HAIRLINE: Color32 = Color32::from_rgb(30, 30, 30); // ~8% white on #0A0A0A
-pub const BORDER_SUBTLE: Color32 = Color32::from_rgb(46, 46, 46); // ~14% white on #0A0A0A
-pub const BORDER_HIGHLIGHT: Color32 = Color32::from_rgb(72, 72, 72); // ~24% white rim
+pub const BORDER_HAIRLINE: Color32 = Color32::from_rgb(30, 30, 30);
+pub const BORDER_SUBTLE: Color32 = Color32::from_rgb(46, 46, 46);
+pub const BORDER_HIGHLIGHT: Color32 = Color32::from_rgb(72, 72, 72);
 pub const DOT_GRID: Color32 = Color32::from_rgba_premultiplied(14, 14, 14, 14);
 
-// Editorial ink contrast ladder (hierarchy by brightness, not heavy bold)
-pub const TEXT_PRIMARY: Color32 = Color32::from_rgb(255, 255, 255); // #FFFFFF
-pub const TEXT_SECONDARY: Color32 = Color32::from_rgb(180, 180, 180); // #B4B4B4
-pub const TEXT_TERTIARY: Color32 = Color32::from_rgb(142, 141, 136); // #8E8D88 warm stone muted
-pub const TEXT_MUTED: Color32 = Color32::from_rgb(112, 112, 112); // #707070 metadata / kbd
+pub const TEXT_PRIMARY: Color32 = Color32::from_rgb(255, 255, 255);
+pub const TEXT_SECONDARY: Color32 = Color32::from_rgb(180, 180, 180);
+pub const TEXT_TERTIARY: Color32 = Color32::from_rgb(142, 141, 136);
+pub const TEXT_MUTED: Color32 = Color32::from_rgb(112, 112, 112);
 
-// Inverted-ink primary CTA (#FFF fill / #000 ink)
 pub const CTA_FILL: Color32 = Color32::from_rgb(255, 255, 255);
 pub const CTA_FILL_HOVER: Color32 = Color32::from_rgb(232, 232, 232);
 pub const CTA_FILL_ACTIVE: Color32 = Color32::from_rgb(206, 206, 206);
 pub const CTA_INK: Color32 = Color32::from_rgb(10, 10, 10);
 
-// Selection / optical pick accent (reserved strictly for reticle, selection, and active indicator)
-pub const ACCENT_PICK: Color32 = Color32::from_rgb(58, 169, 255); // #3AA9FF
+pub const ACCENT_PICK: Color32 = Color32::from_rgb(58, 169, 255);
 pub const SHIMMER_BAR: Color32 = Color32::from_rgb(255, 255, 255);
 
-// Quiet semantic status signals
-pub const OK_EMERALD: Color32 = Color32::from_rgb(52, 209, 122); // #34D17A
+pub const OK_EMERALD: Color32 = Color32::from_rgb(52, 209, 122);
 pub const OK_EMERALD_BG: Color32 = Color32::from_rgb(16, 36, 24);
 pub const OK_EMERALD_BORDER: Color32 = Color32::from_rgb(32, 82, 52);
 
 pub const WARN_ICON_BG: Color32 = Color32::from_rgb(36, 28, 14);
-pub const WARN_TEXT: Color32 = Color32::from_rgb(224, 154, 18); // #E09A12
-pub const CLOSE_HOVER_BG: Color32 = Color32::from_rgb(229, 72, 77); // #E5484D
+pub const WARN_TEXT: Color32 = Color32::from_rgb(224, 154, 18);
+pub const CLOSE_HOVER_BG: Color32 = Color32::from_rgb(229, 72, 77);
 
 pub const CLEAR_COLOR_RGBA: [f32; 4] = [10.0 / 255.0, 10.0 / 255.0, 10.0 / 255.0, 1.0];
 
@@ -60,7 +54,6 @@ fn load_font_if_exists(fonts: &mut FontDefinitions, name: &str, path: &str) -> b
     false
 }
 
-/// Loads native Windows 11 Segoe UI + Cascadia Mono + multi-script fallbacks for crisp Unicode.
 fn install_windows_fonts(ctx: &egui::Context) {
     let mut fonts = FontDefinitions::default();
     let mut proportional_chain = Vec::new();

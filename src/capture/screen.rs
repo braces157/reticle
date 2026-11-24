@@ -106,7 +106,6 @@ impl CroppedImage {
         })
     }
 
-    /// Encodes a fast, compact JPEG tailored for vision LLM calls (downscaled <= 1280px).
     pub fn encode_vision_jpeg(&self) -> Result<Vec<u8>, CaptureError> {
         encode_rgba_to_vision_jpeg(self.width, self.height, &self.rgba)
     }
@@ -121,8 +120,6 @@ pub fn encode_rgba_to_png(width: u32, height: u32, rgba: &[u8]) -> Result<Vec<u8
     Ok(png_bytes)
 }
 
-/// Encodes RGBA pixels into a fast, compact RGB JPEG (quality 82, longest edge <= 1280px)
-/// to cut vision LLM upload bytes and prefill latency by 5-15x vs lossless PNG.
 pub fn encode_rgba_to_vision_jpeg(
     width: u32,
     height: u32,
@@ -221,9 +218,9 @@ impl VirtualScreenCapture {
             let src_row_start = ((rel_y + row) * full_w + rel_x) * 4;
             let src_slice = &self.bgra[src_row_start..src_row_start + crop_w * 4];
             for px in src_slice.as_chunks::<4>().0 {
-                rgba.push(px[2]); // R
-                rgba.push(px[1]); // G
-                rgba.push(px[0]); // B
+                rgba.push(px[2]);
+                rgba.push(px[1]);
+                rgba.push(px[0]);
                 rgba.push(255); // Opaque alpha for screenshots
             }
         }
@@ -236,7 +233,6 @@ impl VirtualScreenCapture {
         })
     }
 
-    /// Crop a rectangle in virtual-screen coordinates into PNG bytes.
     #[cfg(test)]
     pub fn crop_to_png(&self, screen_rect: ScreenRect) -> Result<CapturedRegion, CaptureError> {
         self.crop_to_rgba(screen_rect)?.to_captured_region()
@@ -323,7 +319,6 @@ impl Drop for BitmapGuard {
     }
 }
 
-/// Capture the full multi-monitor virtual desktop via Win32 `BitBlt`.
 pub fn capture_virtual_screen() -> Result<VirtualScreenCapture, CaptureError> {
     // SAFETY: GetSystemMetrics is thread-safe and reads OS virtual desktop geometry.
     let (origin_x, origin_y, width, height) = unsafe {
@@ -495,7 +490,6 @@ mod tests {
         let w = 20;
         let h = 20;
         let mut bgra = vec![0u8; w * h * 4];
-        // Fill with BGR = (10, 20, 30) -> RGB = (30, 20, 10)
         for px in bgra.as_chunks_mut::<4>().0 {
             px[0] = 10;
             px[1] = 20;

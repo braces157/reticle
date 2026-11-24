@@ -14,9 +14,6 @@
   <div class="film-grain" aria-hidden="true"></div>
   <div id="scroll-laser" aria-hidden="true"></div>
 
-  <!-- =========================================================
-       FLOATING LIQUID-GLASS NAVIGATION BAR
-       ========================================================= -->
   <header class="sticky top-0 z-40 bg-void/75 backdrop-blur-2xl border-b border-white/[0.06]">
     <div class="max-w-[1260px] mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-4">
       <a href="#top" class="flex items-center gap-2.5 group shrink-0">
@@ -74,11 +71,7 @@
     </div>
   </header>
 
-  <!-- =========================================================
-       CINEMATIC HERO & INTERACTIVE SNIPPING STAGE
-       ========================================================= -->
   <section id="top" class="relative hero-dome overflow-hidden border-b border-white/[0.06]">
-    <!-- Raw WebGL GLSL Optical Refraction & Calibration Micro-Grid -->
     <canvas id="hero-optical-canvas" class="absolute inset-0 w-full h-full pointer-events-none z-0" aria-hidden="true"></canvas>
 
     <div class="relative z-10 max-w-[1260px] mx-auto px-4 sm:px-6 pt-10 sm:pt-14 pb-20 sm:pb-24">
@@ -87,7 +80,6 @@
         <span class="hidden sm:block absolute top-0 left-0 w-3 h-3 border-t border-l border-white/20 pointer-events-none"></span>
         <span class="hidden sm:block absolute top-0 right-0 w-3 h-3 border-t border-r border-white/20 pointer-events-none"></span>
 
-        <!-- Leica / Teenage Engineering Viewfinder Telemetry Bar -->
         <div class="hidden sm:flex items-center justify-between font-mono text-[10px] tracking-wider uppercase text-white/35 mb-6 px-3">
           <span class="inline-flex items-center gap-2">
             <span class="w-1.5 h-1.5 rounded-full bg-emerald"></span>
@@ -145,7 +137,6 @@
         </div>
       </div>
 
-      <!-- 3D PERSPECTIVE INTERACTIVE DESKTOP DISPLAY -->
       <div id="playground" class="scroll-mt-20 hero-3d-wrap">
         <div id="hero-display-3d" class="titanium-frame shadow-[0_50px_120px_-24px_rgba(0,0,0,0.95)]">
           <div class="rounded-[17px] overflow-hidden bg-[#0A0B10] border border-white/[0.06]">
@@ -180,7 +171,6 @@
               </div>
             </div>
 
-            <!-- Interactive Simulated Desktop Stage -->
             <div id="snip-stage" class="snip-stage desktop-wallpaper relative overflow-hidden">
               <div id="guide-h" class="guide-h"></div>
               <div id="guide-v" class="guide-v"></div>
@@ -192,7 +182,6 @@
               </div>
 
               <div class="relative z-10 p-4 sm:p-6 lg:p-7 grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-5">
-                <!-- WINDOW 1: Paused Video Tutorial -->
                 <div id="target-code" data-target-id="code" data-hint="ANNOTATE &amp; COPY" class="capture-target relative rounded-xl bg-[#0D1017]/95 border border-white/[0.11] overflow-hidden shadow-2xl">
                   <div class="px-3.5 py-2 bg-white/[0.03] border-b border-white/[0.07] flex items-center justify-between text-[11px] text-white/55">
                     <span class="flex items-center gap-2 font-medium text-white/80">
@@ -217,7 +206,6 @@
                   </div>
                 </div>
 
-                <!-- WINDOW 2: Protected Scanned PDF Ledger -->
                 <div id="target-invoice" data-target-id="invoice" data-hint="PIN REFERENCE" class="capture-target relative rounded-xl bg-[#F5F4EF] border border-white/20 text-[#111115] overflow-hidden shadow-2xl paper-scan-effect">
                   <div class="px-3.5 py-2 bg-[#E8E6DE] border-b border-black/10 flex items-center justify-between text-[11px] text-black/60">
                     <span class="flex items-center gap-1.5 font-semibold text-black/80">
@@ -264,7 +252,6 @@
                   </div>
                 </div>
 
-                <!-- WINDOW 3: Rust Code Snippet for AI Explain -->
                 <div id="target-math" data-target-id="math" data-hint="EXPLAIN CODE (BYOK)" class="capture-target relative rounded-xl bg-[#0F1715]/95 border border-white/[0.11] text-[#EAF3EF] overflow-hidden shadow-2xl">
                   <div class="px-3.5 py-2 bg-white/[0.03] border-b border-white/[0.07] flex items-center justify-between text-[11px] text-white/55">
                     <span class="font-medium text-white/80">VS Code · raster.rs</span>
@@ -279,7 +266,6 @@
                   </div>
                 </div>
 
-                <!-- WINDOW 4: Tokyo Sign Photo -->
                 <div id="target-tokyo" data-target-id="tokyo" data-hint="OCR + TRANSLATE" class="capture-target relative rounded-xl bg-[#161112]/95 border border-white/[0.11] text-white overflow-hidden shadow-2xl">
                   <div class="px-3.5 py-2 bg-white/[0.03] border-b border-white/[0.07] flex items-center justify-between text-[11px] text-white/55">
                     <span class="font-medium text-white/80">Dark UI · Shibuya_Sign.png</span>
@@ -300,7 +286,6 @@
                 </div>
               </div>
 
-              <!-- Draggable & Zoomable Pinned Floating Mini Snip -->
               <div id="pinned-stage-card" class="hidden absolute top-4 left-4 z-40 w-64 rounded-xl glass-panel p-3.5 font-mono text-[11px] text-white cursor-grab active:cursor-grabbing origin-top-left">
                 <div class="flex items-center justify-between mb-1.5 text-[10px] text-accent">
                   <span class="flex items-center gap-1.5 font-medium"><i data-lucide="pin" class="w-3 h-3"></i> Pinned · <span id="pinned-stage-zoom" class="text-white/70">100%</span></span>
@@ -310,7 +295,6 @@
                 <div class="mt-2 pt-1.5 border-t border-white/10 text-[9.5px] text-white/45">Drag to move · Scroll to zoom</div>
               </div>
 
-              <!-- Active Spotlight Selection Box with 8 Resize Handles + Live Canvas -->
               <div id="selection-box" class="reticle-box hidden absolute z-30 bg-transparent pointer-events-none">
                 <span class="sel-handle" data-handle="nw"></span>
                 <span class="sel-handle" data-handle="n"></span>
@@ -325,7 +309,6 @@
                   0 × 0 px
                 </div>
 
-                <!-- Live interactive annotation drawing canvas -->
                 <canvas id="stage-annot-canvas" class="absolute inset-0 w-full h-full pointer-events-none"></canvas>
 
                 <div id="selection-quickbar" class="hidden pointer-events-auto absolute -bottom-11 right-0 flex items-center gap-1 p-1 rounded-xl glass-panel text-[11px] whitespace-nowrap">
@@ -341,7 +324,6 @@
                 </div>
               </div>
 
-              <!-- Liquid-Glass Extraction Output Dock -->
               <div id="ocr-hud" class="relative z-30 mx-4 sm:mx-6 mb-5 mt-3 rounded-xl glass-panel text-white overflow-hidden cursor-default">
                 <div class="px-4 py-2.5 bg-white/[0.02] border-b border-white/[0.08] flex flex-wrap items-center justify-between gap-2">
                   <div class="flex items-center gap-2.5">
@@ -371,9 +353,6 @@
     </div>
   </section>
 
-  <!-- =========================================================
-       SECTION 2: SPRING-ELASTIC BEFORE / AFTER COMPARE CURTAIN
-       ========================================================= -->
   <section id="split-lab" class="scroll-mt-16 border-b border-white/[0.06] bg-void">
     <div class="max-w-[1260px] mx-auto px-4 sm:px-6 py-20 sm:py-28">
       <div class="flex flex-col xl:flex-row xl:items-end justify-between gap-6 pb-8 mb-8 border-b border-white/[0.08] scroll-reveal">
@@ -453,9 +432,6 @@
     </div>
   </section>
 
-  <!-- =========================================================
-       SECTION 3: SPECULAR BENTO CAPABILITIES
-       ========================================================= -->
   <section id="capabilities" class="scroll-mt-16 border-b border-white/[0.06] bg-surface/50">
     <div class="max-w-[1260px] mx-auto px-4 sm:px-6 py-20 sm:py-28">
       <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-baseline pb-10 mb-10 border-b border-white/[0.08] scroll-reveal">
@@ -472,7 +448,6 @@
       </div>
 
       <div class="grid grid-cols-1 md:grid-cols-12 gap-4">
-        <!-- CARD 1: In-Overlay Annotations -->
         <div class="spotlight-card scroll-reveal md:col-span-7 p-6 sm:p-8 rounded-2xl flex flex-col justify-between gap-6">
           <div class="relative z-10">
             <h3 class="text-xl font-semibold tracking-[-0.02em] text-white mb-2">In-Overlay Annotations &amp; Mosaic</h3>
@@ -512,7 +487,6 @@
           </div>
         </div>
 
-        <!-- CARD 2: Pin Floating Screenshots -->
         <div class="spotlight-card scroll-reveal md:col-span-5 p-6 sm:p-8 rounded-2xl flex flex-col justify-between gap-6">
           <div class="relative z-10">
             <h3 class="text-xl font-semibold tracking-[-0.02em] text-white mb-2">Pin Floating Screenshots</h3>
@@ -544,7 +518,6 @@
           </div>
         </div>
 
-        <!-- CARD 3: Dark-Mode OCR & Translate -->
         <div class="spotlight-card scroll-reveal md:col-span-5 p-6 sm:p-8 rounded-2xl flex flex-col justify-between gap-5">
           <div class="relative z-10">
             <h3 class="text-xl font-semibold tracking-[-0.02em] text-white mb-2">Dark-Mode OCR &amp; Translate</h3>
@@ -566,7 +539,6 @@
           </div>
         </div>
 
-        <!-- CARD 4: 5-Color Swatch Palette & Sizes -->
         <div class="spotlight-card scroll-reveal md:col-span-4 p-6 sm:p-8 rounded-2xl flex flex-col justify-between gap-5">
           <div class="relative z-10">
             <h3 class="text-xl font-semibold tracking-[-0.02em] text-white mb-2">5-Color Ink &amp; Stroke Sizes</h3>
@@ -600,7 +572,6 @@
           </div>
         </div>
 
-        <!-- CARD 5: Native Footprint -->
         <div class="spotlight-card scroll-reveal md:col-span-3 p-6 sm:p-8 rounded-2xl flex flex-col justify-between gap-5">
           <div class="relative z-10">
             <h3 class="text-xl font-semibold tracking-[-0.02em] text-white mb-2">Pure Rust Binary</h3>
@@ -627,9 +598,6 @@
     </div>
   </section>
 
-  <!-- =========================================================
-       SECTION 4: LOCAL-FIRST ARCHITECTURE & OSCILLOSCOPE
-       ========================================================= -->
   <section id="engine" class="scroll-mt-16 bg-void border-b border-white/[0.06]">
     <div class="max-w-[1260px] mx-auto px-4 sm:px-6 py-20 sm:py-28">
       <div class="grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-14 items-center">
@@ -690,7 +658,6 @@
 
         <div class="lg:col-span-7 scroll-reveal">
           <div id="arch-pipeline-stage" class="spotlight-card relative rounded-2xl overflow-hidden border border-white/[0.1] bg-[#090A0F] shadow-[0_40px_100px_-24px_rgba(0,0,0,0.95)] p-5 sm:p-6">
-            <!-- Header & Mode Switch -->
             <div class="relative z-10 flex flex-wrap items-center justify-between gap-3 pb-4 mb-4 border-b border-white/[0.07]">
               <div>
                 <div class="font-mono text-[10px] text-accent uppercase tracking-widest mb-0.5">Live Rust Dataflow</div>
@@ -706,9 +673,7 @@
               </div>
             </div>
 
-            <!-- Schematic Canvas: Local Air-Gapped Boundary + Optional Direct TLS -->
             <div class="relative z-10 rounded-xl bg-void/70 border border-white/[0.07] p-4 sm:p-5 overflow-hidden">
-              <!-- Animated SVG Wires Layer -->
               <svg id="arch-wires-svg" viewBox="0 0 600 250" preserveAspectRatio="none" class="hidden sm:block absolute inset-0 w-full h-full pointer-events-none z-0">
                 <defs>
                   <filter id="archGlow" x="-50%" y="-50%" width="200%" height="200%">
@@ -719,17 +684,13 @@
                     </feMerge>
                   </filter>
                 </defs>
-                <!-- Top row: Hotkey -> GDI -> Overlay -->
                 <path id="wire-hotkey-gdi" class="arch-wire" d="M 168 58 L 218 58" />
                 <path id="wire-gdi-overlay" class="arch-wire" d="M 382 58 L 432 58" />
-                <!-- Branch down from Overlay to Raster & OCR -->
                 <path id="wire-overlay-raster" class="arch-wire" d="M 480 96 C 480 128, 102 112, 102 152" />
                 <path id="wire-overlay-ocr" class="arch-wire" d="M 505 96 C 505 130, 300 116, 300 152" />
-                <!-- Optional Egress Gate: OCR -> Direct TLS -->
                 <path id="wire-ocr-egress" class="arch-wire is-sealed" d="M 382 188 L 432 188" />
               </svg>
 
-              <!-- Local Process Zone Frame -->
               <div class="relative z-10 space-y-5">
                 <div class="flex items-center justify-between">
                   <span class="font-mono text-[10px] text-emerald/90 uppercase tracking-wider inline-flex items-center gap-1.5">
@@ -741,7 +702,6 @@
                   </span>
                 </div>
 
-                <!-- Row 1: Capture Pipeline -->
                 <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <button type="button" data-arch-node="hotkey" class="arch-node">
                     <div class="flex items-center justify-between font-mono text-[10px] text-white/45 mb-1">
@@ -771,7 +731,6 @@
                   </button>
                 </div>
 
-                <!-- Row 2: Local Outputs + Sealed Optional Egress -->
                 <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
                   <button type="button" data-arch-node="raster" class="arch-node">
                     <div class="flex items-center justify-between font-mono text-[10px] text-emerald/85 mb-1">
@@ -803,7 +762,6 @@
               </div>
             </div>
 
-            <!-- Live Node Inspector Readout -->
             <div class="relative z-10 mt-4 p-3.5 rounded-xl bg-white/[0.025] border border-white/[0.07] flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div class="min-w-0">
                 <div class="flex items-center gap-2 mb-0.5">
@@ -822,9 +780,6 @@
     </div>
   </section>
 
-  <!-- =========================================================
-       SECTION 5: BENCHMARK COMPARISON
-       ========================================================= -->
   <section id="compare" class="scroll-mt-16 border-b border-white/[0.06] bg-surface/40">
     <div class="max-w-[1260px] mx-auto px-4 sm:px-6 py-20 sm:py-28">
       <div class="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-12 scroll-reveal">
@@ -930,9 +885,6 @@
     </div>
   </section>
 
-  <!-- =========================================================
-       SECTION 6: FREE MODE & BYOK AI MODE
-       ========================================================= -->
   <section id="pricing" class="scroll-mt-16 border-b border-white/[0.06] bg-void">
     <div class="max-w-[1040px] mx-auto px-4 sm:px-6 py-20 sm:py-28">
       <div class="flex flex-col sm:flex-row sm:items-end justify-between gap-6 mb-12 scroll-reveal">
@@ -1001,7 +953,6 @@
     </div>
   </section>
 
-  <!-- FOOTER -->
   <footer class="bg-void py-12">
     <div class="max-w-[1260px] mx-auto px-4 sm:px-6 flex flex-col sm:flex-row sm:items-center justify-between gap-6">
       <div class="space-y-1">
@@ -1020,7 +971,6 @@
     </div>
   </footer>
 
-  <!-- DOWNLOAD / BUILD MODAL -->
   <div id="download-modal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="modal-plan-title" class="modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md">
     <div class="modal-dialog w-full max-w-md rounded-2xl glass-panel overflow-hidden">
       <div class="px-5 py-4 border-b border-white/[0.08] flex items-center justify-between">
@@ -1059,7 +1009,6 @@
     </div>
   </div>
 
-  <!-- KEYBOARD SHORTCUTS SHEET -->
   <div id="shortcuts-modal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="shortcuts-modal-title" class="modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md">
     <div class="modal-dialog w-full max-w-md rounded-2xl glass-panel overflow-hidden">
       <div class="px-5 py-4 border-b border-white/[0.08] flex items-center justify-between">
@@ -1105,7 +1054,6 @@
     </div>
   </div>
 
-  <!-- TOAST -->
   <div id="toast" role="status" aria-live="polite" class="toast-pill fixed bottom-5 right-5 z-50 pointer-events-none px-4 py-2.5 rounded-xl glass-panel text-xs font-medium text-white flex items-center gap-2.5">
     <span class="w-2 h-2 rounded-full bg-emerald"></span>
     <span id="toast-msg">Copied to clipboard</span>

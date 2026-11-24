@@ -217,7 +217,6 @@ impl SnipPopupApp {
         ctx.request_repaint_after(Duration::from_millis(28));
     }
 
-    /// Snaps popup window height to the exact measured height of rendered content (zero clipping, zero dead void).
     pub(crate) fn sync_measured_height(&mut self, ctx: &egui::Context, measured_total_h: f32) {
         let target = measured_total_h.clamp(84.0, POPUP_HEIGHT_MAX_RESULT);
         if (target - self.current_height).abs() > 3.0 {
@@ -597,8 +596,6 @@ impl SnipPopupApp {
                 hide_overlay_viewport(ctx);
                 self.handle_overlay_result(ctx, result);
             } else if let Some(ref overlay) = self.snip_overlay {
-                // Speculatively pre-run local OCR (+ AI Translate/Explain when enabled) once
-                // the selection settles so clicking any toolbar action is instant or live-streaming.
                 let settled = overlay.settled_selection();
                 let target_lang = self.config.normalized_target_language();
                 if let Some(wait) = self.prefetch.observe_overlay_selection(
@@ -671,7 +668,6 @@ impl SnipPopupApp {
             Arc::clone(&self.egui_slot),
         ) {
             ActionAttach::Ready(output) => {
-                // 0ms instant hit from speculative prefetch or per-region cache!
                 self.ocr_expanded = output.primary_text.is_empty();
                 let height = window::estimate_result_height(&output, self.ocr_expanded);
                 self.content = PopupContent::Result {

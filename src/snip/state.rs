@@ -287,7 +287,6 @@ mod tests {
             width: 3840,
             height: 1080,
         };
-        // Simulate 150% DPI canvas
         let canvas = Rect::from_min_size(Pos2::ZERO, Vec2::new(2560.0, 720.0));
         let pt = logical_to_phys(Pos2::new(640.0, 360.0), canvas, bounds);
         assert_eq!(pt, ScreenPt { x: -960, y: 540 });
@@ -344,7 +343,6 @@ mod tests {
             handle: ResizeHandle::Nw,
             original: orig,
         };
-        // Drag past bottom-right corner
         let resized = apply_drag(drag, ScreenPt { x: 500, y: 500 }, bounds);
         assert_eq!(resized.width, MIN_SNIP_SIZE);
         assert_eq!(resized.height, MIN_SNIP_SIZE);
@@ -357,19 +355,16 @@ mod tests {
         let monitor = Rect::from_min_size(Pos2::ZERO, Vec2::new(1920.0, 1080.0));
         let bar = Vec2::new(340.0, 38.0);
 
-        // Normal middle selection -> sits below
         let mid = Rect::from_min_size(Pos2::new(400.0, 300.0), Vec2::new(400.0, 200.0));
         let pos_mid = compute_toolbar_pos(mid, bar, monitor);
         assert_eq!(pos_mid.y, 508.0);
         assert_eq!(pos_mid.x, 460.0);
 
-        // Bottom edge selection -> flips above
         let bottom = Rect::from_min_size(Pos2::new(10.0, 900.0), Vec2::new(200.0, 175.0));
         let pos_bot = compute_toolbar_pos(bottom, bar, monitor);
         assert_eq!(pos_bot.y, 900.0 - 8.0 - 38.0);
-        assert_eq!(pos_bot.x, 10.0); // Clamped to monitor left margin
+        assert_eq!(pos_bot.x, 10.0);
 
-        // Fullscreen selection -> docks inside bottom-right
         let full = monitor;
         let pos_full = compute_toolbar_pos(full, bar, monitor);
         assert!(pos_full.y >= 10.0 && pos_full.y + bar.y <= 1070.0);

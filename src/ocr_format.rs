@@ -110,8 +110,6 @@ pub fn smart_format(raw: &str) -> SmartFormatResult {
     }
 }
 
-/// Attempts to parse OCR text as JSON (fixing curly OCR quotes and trailing commas)
-/// and pretty-print it with crisp 2-space indentation.
 fn try_format_json(trimmed: &str) -> Option<String> {
     if !((trimmed.starts_with('{') && trimmed.ends_with('}'))
         || (trimmed.starts_with('[') && trimmed.ends_with(']')))
@@ -124,7 +122,6 @@ fn try_format_json(trimmed: &str) -> Option<String> {
     if let Ok(val) = serde_json::from_str::<serde_json::Value>(&cleaned) {
         return serde_json::to_string_pretty(&val).ok();
     }
-    // Try stripping common trailing commas before `}` or `]`
     let no_trailing = strip_trailing_json_commas(&cleaned);
     let val = serde_json::from_str::<serde_json::Value>(&no_trailing).ok()?;
     serde_json::to_string_pretty(&val).ok()
@@ -190,12 +187,12 @@ pub fn join_single_line(raw: &str) -> String {
 fn is_cjk_char(ch: char) -> bool {
     matches!(
         ch as u32,
-        0x3040..=0x309F // Hiragana
-            | 0x30A0..=0x30FF // Katakana
-            | 0x3400..=0x4DBF // CJK Extension A
-            | 0x4E00..=0x9FFF // CJK Unified Ideographs
-            | 0xAC00..=0xD7AF // Hangul Syllables
-            | 0xF900..=0xFAFF // CJK Compatibility Ideographs
+        0x3040..=0x309F
+            | 0x30A0..=0x30FF
+            | 0x3400..=0x4DBF
+            | 0x4E00..=0x9FFF
+            | 0xAC00..=0xD7AF
+            | 0xF900..=0xFAFF
     )
 }
 
@@ -231,7 +228,6 @@ fn clean_inline_spacing(line: &str) -> String {
     while i < chars.len() {
         let ch = chars[i];
         if ch == ' ' || ch == '\t' {
-            // Skip entire whitespace run
             let mut j = i + 1;
             while j < chars.len() && (chars[j] == ' ' || chars[j] == '\t') {
                 j += 1;
@@ -291,7 +287,6 @@ fn append_joined_line(dst: &mut String, next: &str) {
         return;
     }
 
-    // De-hyphenate wrapped English/Latin word breaks (`imple-` + `mentation` -> `implementation`)
     if dst.ends_with('-')
         && !dst.ends_with("--")
         && let Some(before_hyphen) = dst.chars().rev().nth(1)
@@ -365,7 +360,6 @@ fn looks_like_code(lines: &[&str]) -> bool {
         {
             score += 2;
         }
-        // JSON / YAML key-value line
         if line.starts_with('"') && line.contains("\":") {
             score += 2;
         }
@@ -429,8 +423,6 @@ fn format_code(lines: &[&str]) -> String {
     out_lines.join("\n")
 }
 
-/// Cleans common OCR spacing artifacts in code outside string literals (`std :: vec` -> `std::vec`,
-/// `foo ( x )` -> `foo(x)`, `a ;` -> `a;`).
 fn clean_code_line_spacing(line: &str) -> String {
     let chars: Vec<char> = line.chars().collect();
     let mut out = String::with_capacity(line.len());
@@ -458,7 +450,6 @@ fn clean_code_line_spacing(line: &str) -> String {
             i += 1;
             continue;
         }
-        // Collapse ` :: ` -> `::`
         if ch == ' '
             && chars.get(i + 1) == Some(&':')
             && chars.get(i + 2) == Some(&':')
@@ -470,12 +461,10 @@ fn clean_code_line_spacing(line: &str) -> String {
             }
             continue;
         }
-        // Drop space before `;`, `,`, `)`, `]`
         if ch == ' ' && matches!(chars.get(i + 1), Some(';' | ',' | ')' | ']')) {
             i += 1;
             continue;
         }
-        // Drop space right after `(` or `[`
         if matches!(ch, '(' | '[') && chars.get(i + 1) == Some(&' ') {
             out.push(ch);
             i += 2;
@@ -571,7 +560,6 @@ fn format_key_value_table(lines: &[&str]) -> String {
 }
 
 fn parse_list_prefix(trimmed: &str) -> Option<(String, &str)> {
-    // Bullet symbols commonly emitted by OCR
     for bullet in ["• ", "· ", "◦ ", "▪ ", "▸ ", "- ", "* ", "•", "▪", "◦"] {
         if let Some(rest) = trimmed.strip_prefix(bullet) {
             let rest = rest.trim_start();
@@ -580,7 +568,6 @@ fn parse_list_prefix(trimmed: &str) -> Option<(String, &str)> {
             }
         }
     }
-    // Numbered list (`1. Foo` or `1) Foo`)
     let bytes = trimmed.as_bytes();
     let mut digits = 0;
     while digits < bytes.len() && digits < 3 && bytes[digits].is_ascii_digit() {
@@ -662,7 +649,6 @@ fn format_prose(lines: &[&str]) -> String {
             continue;
         }
 
-        // Preserve explicit bullet/numbered item inside mixed prose
         if let Some((prefix, rest)) = parse_list_prefix(&cleaned) {
             if !current.is_empty() {
                 paragraphs.push(clean_punctuation_spacing(&current));
@@ -673,7 +659,6 @@ fn format_prose(lines: &[&str]) -> String {
             continue;
         }
 
-        // Keep short standalone title/heading lines separate from body paragraph
         let prev_looks_like_heading = !current.is_empty()
             && current.chars().count() <= 42
             && !ends_hard_sentence(&current)

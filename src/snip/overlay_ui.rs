@@ -256,7 +256,6 @@ impl SnipOverlaySession {
             return;
         }
 
-        // Post-reveal drift guard (should rarely trigger now that stabilization happens cloaked).
         if self.window_phys_rect != b
             && self.reposition_attempts < 4
             && let Some(hwnd) = hwnd
@@ -279,7 +278,6 @@ impl SnipOverlaySession {
         }
     }
 
-    /// Renders the interactive overlay inside its viewport and returns `Some(result)` when finished.
     pub fn ui(&mut self, ui: &mut egui::Ui) -> Option<SnipOverlayResult> {
         let ctx = ui.ctx().clone();
         self.ensure_win32_bounds_and_reveal(&ctx, ui.max_rect());
@@ -321,7 +319,6 @@ impl SnipOverlaySession {
                 if let Some(sel_phys) = self.stage.selection_rect() {
                     let sel_logical = phys_rect_to_logical(sel_phys, canvas, bounds);
 
-                    // Paint committed + in-progress annotations clipped to the selection crop
                     let clip_painter = ui.painter_at(sel_logical);
                     for op in &self.doc.ops {
                         paint_op(&clip_painter, op, &self.capture, canvas, bounds);
@@ -353,7 +350,6 @@ impl SnipOverlaySession {
 
                     paint_dimension_pill(&painter, sel_logical, sel_phys, canvas);
 
-                    // Render inline text editor if active
                     self.render_inline_text_editor(&ctx, canvas, bounds);
                 } else {
                     self.text_box_rect = None;
@@ -377,7 +373,6 @@ impl SnipOverlaySession {
                     paint_idle_hint(&painter, canvas, &self.monitors, bounds, cursor_phys, self.mode);
                 }
 
-                // Floating Snipaste toolbar when Adjusting & not actively dragging a handle or drawing
                 if let OverlayStage::Adjusting {
                     rect: sel_phys,
                     drag: None,
@@ -716,7 +711,6 @@ impl SnipOverlaySession {
             };
         }
 
-        // Handle active in-progress annotation stroke
         if let Some(mut draft) = self.in_progress.take() {
             if let Some(pos) = interact_pos {
                 let pt = logical_to_phys(pos, canvas, bounds);
@@ -903,16 +897,12 @@ fn set_overlay_cloaked(cloaked: bool) {
     }
 }
 
-/// Checks whether the egui/OpenGL canvas physical dimensions match the target virtual screen
-/// within a tiny DPI rounding tolerance (4 physical px).
 fn is_gl_canvas_synced(canvas_logical: Rect, ppp: f32, expected: ScreenRect) -> bool {
     let phys_w = (canvas_logical.width() * ppp).round() as i32;
     let phys_h = (canvas_logical.height() * ppp).round() as i32;
     (phys_w - expected.width).abs() <= 4 && (phys_h - expected.height).abs() <= 4
 }
 
-/// Computes the normalized texture UV rectangle for the sub-region of `capture_bounds`
-/// physically covered by `window_rect`, guaranteeing 1:1 pixel alignment on mixed-DPI monitors.
 fn compute_overlay_uv(window_rect: ScreenRect, capture_bounds: ScreenRect) -> Rect {
     if capture_bounds.width <= 0 || capture_bounds.height <= 0 {
         return Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
@@ -1042,11 +1032,9 @@ mod tests {
             width: 3960,
             height: 1920,
         };
-        // Exact match at 1.25 DPI (Monitor 2)
         let exact = Rect::from_min_size(Pos2::ZERO, Vec2::new(3960.0 / 1.25, 1920.0 / 1.25));
         assert!(is_gl_canvas_synced(exact, 1.25, expected));
 
-        // Stale 1x1 or primary-only size must be rejected so overlay stays cloaked
         let stale_primary = Rect::from_min_size(Pos2::ZERO, Vec2::new(2880.0 / 1.75, 1800.0 / 1.75));
         assert!(!is_gl_canvas_synced(stale_primary, 1.25, expected));
         assert!(!is_gl_canvas_synced(stale_primary, 1.75, expected));
@@ -1076,12 +1064,9 @@ mod tests {
             width: 3960,
             height: 1920,
         };
-        // Full virtual desktop match -> exact 0..1 UVs
         let full = compute_overlay_uv(virtual_desktop, virtual_desktop);
         assert_eq!(full, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)));
 
-        // If OS temporarily clamped window to primary monitor (0, 0, 2880, 1800),
-        // UV must start at 1080/3960 so Monitor 2 never bleeds onto Monitor 1.
         let primary_only = ScreenRect {
             x: 0,
             y: 0,

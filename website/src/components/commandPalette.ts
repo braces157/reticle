@@ -10,9 +10,6 @@ interface CommandItem {
   run: () => void;
 }
 
-/**
- * Raycast / Linear-style Ctrl+K Command Palette with instant fuzzy filtering and keyboard navigation.
- */
 export function initCommandPalette(liveSnip: LiveSnipController): void {
   const backdrop = document.createElement('div');
   backdrop.id = 'cmdk-modal';

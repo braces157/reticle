@@ -9,7 +9,6 @@ void main() {
 }
 `;
 
-// Leica Optical Glass Refraction + Precision Calibration Micro-Grid + Click Shutter Ripple
 const FRAG_SRC = `
 precision highp float;
 varying vec2 v_uv;

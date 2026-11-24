@@ -18,11 +18,6 @@ export interface LiveSnipController {
 
 let pinCounter = 0;
 
-/**
- * Full-viewport "Live Page Snip" overlay — lets visitors press `S` (or click Try Live Snip)
- * to literally snip any text/section of the landing page itself, OCR-extract real DOM text
- * inside the drawn box, or pin a floating draggable/zoomable/opacity card over the site!
- */
 export function initLiveSnip(): LiveSnipController {
   const overlay = document.createElement('div');
   overlay.id = 'live-snip-overlay';
@@ -262,7 +257,6 @@ export function initLiveSnip(): LiveSnipController {
       return;
     }
 
-    // Pressing `S` (no modifiers) anywhere on the site launches Live Page Snip!
     if (e.key.toLowerCase() === 's' && !e.ctrlKey && !e.metaKey && !e.altKey) {
       const anyModalOpen = document.querySelector('.modal-backdrop.is-open, .cmdk-backdrop.is-open');
       if (!anyModalOpen) {
