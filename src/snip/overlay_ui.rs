@@ -19,10 +19,12 @@ use egui::{
 };
 use windows::core::w;
 use windows::Win32::Foundation::RECT;
-use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_CLOAK};
+use windows::Win32::Graphics::Dwm::{
+    DwmSetWindowAttribute, DWMWA_CLOAK, DWMWA_TRANSITIONS_FORCEDISABLED,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     FindWindowW, GetWindowRect, SetForegroundWindow, SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE,
-    SWP_NOREDRAW, SWP_NOSENDCHANGING, SWP_SHOWWINDOW,
+    SWP_NOSENDCHANGING,
 };
 
 pub const OVERLAY_VIEWPORT_TITLE: &str = "SnipToolOverlayViewport";
@@ -55,7 +57,9 @@ pub struct SnipOverlaySession {
     texture: TextureHandle,
     stage: OverlayStage,
     mode: SnipMode,
-    frames_rendered: u8,
+    revealed: bool,
+    cloak_frames: u8,
+    stable_frames: u8,
     reposition_attempts: u8,
     window_phys_rect: ScreenRect,
     toolbar_id: Id,
@@ -91,7 +95,9 @@ impl SnipOverlaySession {
             texture,
             stage: OverlayStage::Idle,
             mode,
-            frames_rendered: 0,
+            revealed: false,
+            cloak_frames: 0,
+            stable_frames: 0,
             reposition_attempts: 0,
             window_phys_rect: initial_bounds,
             toolbar_id: Id::unique("snip-floating-toolbar"),
@@ -156,9 +162,9 @@ impl SnipOverlaySession {
     }
 
     pub fn hidden_viewport_builder() -> ViewportBuilder {
-        Self::base_viewport_builder()
-            .with_inner_size([1.0, 1.0])
-            .with_visible(false)
+        // Deliberately omit `with_inner_size` so hiding the overlay after a snip preserves its
+        // exact multi-monitor HWND geometry and DPI for instant, zero-jump subsequent Alt+O triggers.
+        Self::base_viewport_builder().with_visible(false)
     }
 
     fn sync_window_phys_rect(&mut self, expected: ScreenRect) -> Option<windows::Win32::Foundation::HWND> {
@@ -187,17 +193,24 @@ impl SnipOverlaySession {
         }
     }
 
-    fn ensure_win32_bounds_and_reveal(&mut self, ctx: &egui::Context) {
+    fn ensure_win32_bounds_and_reveal(&mut self, ctx: &egui::Context, canvas_logical: Rect) {
         let b = self.capture.bounds();
         let hwnd = self.sync_window_phys_rect(b);
 
-        if self.frames_rendered == 0 {
-            // Keep the HWND cloaked during the very first paint so OpenGL uploads the frozen
-            // desktop texture and swaps a real frame to DWM before the user ever sees it
-            // (eliminates the brief white flash on Alt+O).
+        if !self.revealed {
+            // Stay invisibly cloaked (`DWMWA_CLOAK = 1`) until Win32 bounds, `WM_DPICHANGED`,
+            // AND the OpenGL/egui swapchain have all stabilized at exact `(b.x, b.y, b.w, b.h)`
+            // and swapped a full pixel-aligned frame to DWM. This eliminates both white flash
+            // and any visible multi-monitor move/snap-back jump on Alt+O.
             set_overlay_cloaked(true);
-            if let Some(hwnd) = hwnd {
-                // SAFETY: Sizes our own overlay viewport in exact physical virtual-screen pixels.
+            self.cloak_frames = self.cloak_frames.saturating_add(1);
+
+            let bounds_match = self.window_phys_rect == b;
+            let ppp = ctx.pixels_per_point().max(1.0);
+            let gl_matches = is_gl_canvas_synced(canvas_logical, ppp, b);
+
+            if !bounds_match && let Some(hwnd) = hwnd {
+                // SAFETY: Sizes our own cloaked overlay viewport in exact physical pixels.
                 // `SWP_NOSENDCHANGING` bypasses `WM_GETMINMAXINFO` single-monitor clamping.
                 unsafe {
                     let _ = SetWindowPos(
@@ -207,45 +220,40 @@ impl SnipOverlaySession {
                         b.y,
                         b.width,
                         b.height,
-                        SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOSENDCHANGING,
+                        SWP_NOACTIVATE | SWP_NOSENDCHANGING,
                     );
                 }
                 let _ = self.sync_window_phys_rect(b);
+                self.stable_frames = 0;
+            } else if bounds_match && gl_matches {
+                self.stable_frames = self.stable_frames.saturating_add(1);
+            } else {
+                self.stable_frames = 0;
             }
-            self.frames_rendered = 1;
-            ctx.request_repaint();
-            return;
-        }
 
-        if self.frames_rendered == 1 {
-            // Frame 0 has now been swapped to DWM; enforce exact physical bounds (in case
-            // `WM_DPICHANGED` shifted the HWND across mixed-DPI monitors) and reveal atomically.
-            if let Some(hwnd) = hwnd {
-                // SAFETY: Reveals and focuses our own uniquely titled overlay viewport window.
-                unsafe {
-                    let _ = SetWindowPos(
-                        hwnd,
-                        Some(HWND_TOPMOST),
-                        b.x,
-                        b.y,
-                        b.width,
-                        b.height,
-                        SWP_SHOWWINDOW | SWP_NOSENDCHANGING,
-                    );
+            // Reveal once we have 2 consecutive settled frames (at least 1 full-size GL swap
+            // already in DWM) or after a short safety cap (~160ms) so we never stay hidden.
+            let ready_to_reveal = self.stable_frames >= 2 || self.cloak_frames >= 10;
+            if ready_to_reveal {
+                if let Some(hwnd) = hwnd {
+                    // SAFETY: Atomically reveals our already-positioned, already-painted overlay.
+                    unsafe {
+                        set_overlay_cloaked(false);
+                        let _ = SetForegroundWindow(hwnd);
+                    }
+                } else {
                     set_overlay_cloaked(false);
-                    let _ = SetForegroundWindow(hwnd);
                 }
-                let _ = self.sync_window_phys_rect(b);
+                self.revealed = true;
+            } else {
+                ctx.request_repaint();
             }
-            self.frames_rendered = 2;
-            ctx.request_repaint();
             return;
         }
 
-        // Guard against asynchronous `WM_DPICHANGED` or winit resizes shifting the overlay off
-        // negative-origin secondary monitors on mixed-DPI setups.
+        // Post-reveal drift guard (should rarely trigger now that stabilization happens cloaked).
         if self.window_phys_rect != b
-            && self.reposition_attempts < 6
+            && self.reposition_attempts < 4
             && let Some(hwnd) = hwnd
         {
             self.reposition_attempts += 1;
@@ -269,7 +277,7 @@ impl SnipOverlaySession {
     /// Renders the interactive overlay inside its viewport and returns `Some(result)` when finished.
     pub fn ui(&mut self, ui: &mut egui::Ui) -> Option<SnipOverlayResult> {
         let ctx = ui.ctx().clone();
-        self.ensure_win32_bounds_and_reveal(&ctx);
+        self.ensure_win32_bounds_and_reveal(&ctx, ui.max_rect());
 
         if let Some(cmd) = self.handle_keyboard(&ctx) {
             return Some(self.finalize_command(cmd));
@@ -859,6 +867,13 @@ fn set_overlay_cloaked(cloaked: bool) {
         if let Ok(hwnd) = FindWindowW(None, w!("SnipToolOverlayViewport"))
             && !hwnd.is_invalid()
         {
+            let disable_transitions: i32 = 1;
+            let _ = DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_TRANSITIONS_FORCEDISABLED,
+                (&raw const disable_transitions).cast(),
+                std::mem::size_of_val(&disable_transitions) as u32,
+            );
             let _ = DwmSetWindowAttribute(
                 hwnd,
                 DWMWA_CLOAK,
@@ -867,6 +882,14 @@ fn set_overlay_cloaked(cloaked: bool) {
             );
         }
     }
+}
+
+/// Checks whether the egui/OpenGL canvas physical dimensions match the target virtual screen
+/// within a tiny DPI rounding tolerance (4 physical px).
+fn is_gl_canvas_synced(canvas_logical: Rect, ppp: f32, expected: ScreenRect) -> bool {
+    let phys_w = (canvas_logical.width() * ppp).round() as i32;
+    let phys_h = (canvas_logical.height() * ppp).round() as i32;
+    (phys_w - expected.width).abs() <= 4 && (phys_h - expected.height).abs() <= 4
 }
 
 /// Computes the normalized texture UV rectangle for the sub-region of `capture_bounds`
@@ -900,7 +923,7 @@ pub fn prepare_overlay_window_cloaked(bounds: ScreenRect) {
                 bounds.y,
                 bounds.width,
                 bounds.height,
-                SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOSENDCHANGING,
+                SWP_NOACTIVATE | SWP_NOSENDCHANGING,
             );
         }
     }
@@ -943,12 +966,36 @@ mod tests {
         );
 
         let mut active_builder = active;
-        let (_cmds, recreate_to_hidden) =
+        let (hide_cmds, recreate_to_hidden) =
             active_builder.patch(SnipOverlaySession::hidden_viewport_builder());
         assert!(
             !recreate_to_hidden,
             "switching overlay viewport from active to hidden must never recreate the native window"
         );
+        assert!(
+            !hide_cmds
+                .iter()
+                .any(|c| matches!(c, ViewportCommand::InnerSize(_))),
+            "hiding overlay must preserve HWND size so subsequent Alt+O triggers never jump"
+        );
+    }
+
+    #[test]
+    fn gl_canvas_sync_check_tolerates_dpi_rounding_and_rejects_stale_sizes() {
+        let expected = ScreenRect {
+            x: -1080,
+            y: 0,
+            width: 3960,
+            height: 1920,
+        };
+        // Exact match at 1.25 DPI (Monitor 2)
+        let exact = Rect::from_min_size(Pos2::ZERO, Vec2::new(3960.0 / 1.25, 1920.0 / 1.25));
+        assert!(is_gl_canvas_synced(exact, 1.25, expected));
+
+        // Stale 1x1 or primary-only size must be rejected so overlay stays cloaked
+        let stale_primary = Rect::from_min_size(Pos2::ZERO, Vec2::new(2880.0 / 1.75, 1800.0 / 1.75));
+        assert!(!is_gl_canvas_synced(stale_primary, 1.25, expected));
+        assert!(!is_gl_canvas_synced(stale_primary, 1.75, expected));
     }
 
     #[test]
