@@ -205,6 +205,7 @@ impl SnipPopupApp {
         ctx.send_viewport_cmd(ViewportCommand::OuterPosition(pos_logical));
         ctx.send_viewport_cmd(ViewportCommand::Visible(true));
         ctx.send_viewport_cmd(ViewportCommand::Focus);
+        let _ = window::apply_popup_dwm_styling();
         ctx.request_repaint();
         ctx.request_repaint_after(Duration::from_millis(28));
     }

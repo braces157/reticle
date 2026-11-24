@@ -20,7 +20,8 @@ use egui::{
 use windows::core::w;
 use windows::Win32::Foundation::RECT;
 use windows::Win32::Graphics::Dwm::{
-    DwmSetWindowAttribute, DWMWA_CLOAK, DWMWA_TRANSITIONS_FORCEDISABLED,
+    DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_CLOAK, DWMWA_COLOR_NONE,
+    DWMWA_TRANSITIONS_FORCEDISABLED, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     FindWindowW, GetWindowLongPtrW, GetWindowRect, SetForegroundWindow, SetWindowLongPtrW,
@@ -877,6 +878,20 @@ fn set_overlay_cloaked(cloaked: bool) {
                 DWMWA_TRANSITIONS_FORCEDISABLED,
                 (&raw const disable_transitions).cast(),
                 std::mem::size_of_val(&disable_transitions) as u32,
+            );
+            let no_border: u32 = DWMWA_COLOR_NONE;
+            let _ = DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_BORDER_COLOR,
+                (&raw const no_border).cast(),
+                std::mem::size_of_val(&no_border) as u32,
+            );
+            let square_corners = DWMWCP_DONOTROUND;
+            let _ = DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_WINDOW_CORNER_PREFERENCE,
+                (&raw const square_corners).cast(),
+                std::mem::size_of_val(&square_corners) as u32,
             );
             let _ = DwmSetWindowAttribute(
                 hwnd,
