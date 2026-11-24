@@ -1,3 +1,4 @@
+mod ocr_highlight;
 pub mod popup;
 mod popup_view;
 pub mod theme;

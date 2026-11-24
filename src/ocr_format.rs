@@ -6,6 +6,8 @@
 pub enum SmartFormatKind {
     Prose,
     Code,
+    Json,
+    Table,
     List,
     Cjk,
 }
@@ -15,6 +17,8 @@ impl SmartFormatKind {
         match self {
             Self::Prose => "Prose",
             Self::Code => "Code",
+            Self::Json => "JSON",
+            Self::Table => "Key-Value",
             Self::List => "List",
             Self::Cjk => "CJK",
         }
@@ -27,8 +31,8 @@ pub struct SmartFormatResult {
     pub kind: SmartFormatKind,
 }
 
-/// Automatically detects whether OCR text is code, a bullet/numbered list, CJK text, or prose,
-/// and applies tailored cleanup without destroying intentional structure.
+/// Automatically detects whether OCR text is JSON, code, key-value pairs, a bullet/numbered list,
+/// CJK text, or prose, and applies tailored cleanup without destroying intentional structure.
 pub fn smart_format(raw: &str) -> SmartFormatResult {
     let normalized = raw.replace("\r\n", "\n").replace('\r', "\n");
     let trimmed = normalized.trim();
@@ -36,6 +40,13 @@ pub fn smart_format(raw: &str) -> SmartFormatResult {
         return SmartFormatResult {
             text: String::new(),
             kind: SmartFormatKind::Prose,
+        };
+    }
+
+    if let Some(pretty_json) = try_format_json(trimmed) {
+        return SmartFormatResult {
+            text: pretty_json,
+            kind: SmartFormatKind::Json,
         };
     }
 
@@ -54,6 +65,13 @@ pub fn smart_format(raw: &str) -> SmartFormatResult {
         };
     }
 
+    if looks_like_key_value_table(&lines) {
+        return SmartFormatResult {
+            text: format_key_value_table(&lines),
+            kind: SmartFormatKind::Table,
+        };
+    }
+
     let is_cjk = has_significant_cjk(trimmed);
     let formatted = format_prose(&lines);
     SmartFormatResult {
@@ -64,6 +82,68 @@ pub fn smart_format(raw: &str) -> SmartFormatResult {
             SmartFormatKind::Prose
         },
     }
+}
+
+/// Attempts to parse OCR text as JSON (fixing curly OCR quotes and trailing commas)
+/// and pretty-print it with crisp 2-space indentation.
+fn try_format_json(trimmed: &str) -> Option<String> {
+    if !((trimmed.starts_with('{') && trimmed.ends_with('}'))
+        || (trimmed.starts_with('[') && trimmed.ends_with(']')))
+    {
+        return None;
+    }
+    let cleaned = trimmed
+        .replace(['“', '”'], "\"")
+        .replace(['‘', '’'], "'");
+    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&cleaned) {
+        return serde_json::to_string_pretty(&val).ok();
+    }
+    // Try stripping common trailing commas before `}` or `]`
+    let no_trailing = strip_trailing_json_commas(&cleaned);
+    let val = serde_json::from_str::<serde_json::Value>(&no_trailing).ok()?;
+    serde_json::to_string_pretty(&val).ok()
+}
+
+fn strip_trailing_json_commas(input: &str) -> String {
+    let chars: Vec<char> = input.chars().collect();
+    let mut out = String::with_capacity(input.len());
+    let mut in_str = false;
+    let mut escaped = false;
+    let mut i = 0;
+    while i < chars.len() {
+        let ch = chars[i];
+        if in_str {
+            out.push(ch);
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_str = false;
+            }
+            i += 1;
+            continue;
+        }
+        if ch == '"' {
+            in_str = true;
+            out.push(ch);
+            i += 1;
+            continue;
+        }
+        if ch == ',' {
+            let mut j = i + 1;
+            while j < chars.len() && chars[j].is_whitespace() {
+                j += 1;
+            }
+            if matches!(chars.get(j), Some('}' | ']')) {
+                i += 1;
+                continue;
+            }
+        }
+        out.push(ch);
+        i += 1;
+    }
+    out
 }
 
 /// Collapses all line breaks and extra whitespace into a single clean line (ideal for URLs,
@@ -269,8 +349,22 @@ fn looks_like_code(lines: &[&str]) -> bool {
 }
 
 fn format_code(lines: &[&str]) -> String {
+    // Check if OCR flattened all leading indentation (every non-empty line starts at column 0)
+    // while containing brace blocks — if so, auto-reindent cleanly by brace depth.
+    let non_empty: Vec<&str> = lines
+        .iter()
+        .copied()
+        .filter(|l| !l.trim().is_empty())
+        .collect();
+    let has_original_indent = non_empty
+        .iter()
+        .any(|l| l.starts_with(' ') || l.starts_with('\t'));
+    let has_braces = non_empty.iter().any(|l| l.contains('{') && !l.contains('}'));
+    let auto_indent_braces = !has_original_indent && has_braces;
+
     let mut out_lines: Vec<String> = Vec::with_capacity(lines.len());
     let mut prev_blank = false;
+    let mut brace_depth: usize = 0;
 
     for raw_line in lines {
         let trimmed_end = raw_line.trim_end();
@@ -283,17 +377,171 @@ fn format_code(lines: &[&str]) -> String {
         }
         prev_blank = false;
 
-        // Preserve leading indentation, normalize smart quotes OCR often introduces in code
         let indent_len = trimmed_end.len() - trimmed_end.trim_start().len();
-        let indent = &trimmed_end[..indent_len];
+        let orig_indent = &trimmed_end[..indent_len];
         let body = trimmed_end[indent_len..]
             .replace(['“', '”'], "\"")
             .replace(['‘', '’'], "'");
-        let cleaned_body = clean_inline_spacing(&body);
-        out_lines.push(format!("{indent}{cleaned_body}"));
+        let cleaned_body = clean_code_line_spacing(&clean_inline_spacing(&body));
+
+        if auto_indent_braces {
+            let leading_closes = cleaned_body
+                .chars()
+                .take_while(|&c| c == '}' || c == ')' || c == ']')
+                .count();
+            brace_depth = brace_depth.saturating_sub(leading_closes);
+            let indent = "    ".repeat(brace_depth);
+            out_lines.push(format!("{indent}{cleaned_body}"));
+            let opens = count_unquoted_char(&cleaned_body, '{');
+            let closes = count_unquoted_char(&cleaned_body, '}').saturating_sub(leading_closes);
+            brace_depth = brace_depth.saturating_add(opens).saturating_sub(closes);
+        } else {
+            out_lines.push(format!("{orig_indent}{cleaned_body}"));
+        }
     }
 
     out_lines.join("\n")
+}
+
+/// Cleans common OCR spacing artifacts in code outside string literals (`std :: vec` -> `std::vec`,
+/// `foo ( x )` -> `foo(x)`, `a ;` -> `a;`).
+fn clean_code_line_spacing(line: &str) -> String {
+    let chars: Vec<char> = line.chars().collect();
+    let mut out = String::with_capacity(line.len());
+    let mut in_quote: Option<char> = None;
+    let mut escaped = false;
+    let mut i = 0;
+
+    while i < chars.len() {
+        let ch = chars[i];
+        if let Some(q) = in_quote {
+            out.push(ch);
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == q {
+                in_quote = None;
+            }
+            i += 1;
+            continue;
+        }
+        if ch == '"' || ch == '\'' || ch == '`' {
+            in_quote = Some(ch);
+            out.push(ch);
+            i += 1;
+            continue;
+        }
+        // Collapse ` :: ` -> `::`
+        if ch == ' '
+            && chars.get(i + 1) == Some(&':')
+            && chars.get(i + 2) == Some(&':')
+        {
+            out.push_str("::");
+            i += 3;
+            if chars.get(i) == Some(&' ') {
+                i += 1;
+            }
+            continue;
+        }
+        // Drop space before `;`, `,`, `)`, `]`
+        if ch == ' ' && matches!(chars.get(i + 1), Some(';' | ',' | ')' | ']')) {
+            i += 1;
+            continue;
+        }
+        // Drop space right after `(` or `[`
+        if matches!(ch, '(' | '[') && chars.get(i + 1) == Some(&' ') {
+            out.push(ch);
+            i += 2;
+            continue;
+        }
+        out.push(ch);
+        i += 1;
+    }
+    out
+}
+
+fn count_unquoted_char(line: &str, needle: char) -> usize {
+    let mut count = 0;
+    let mut in_quote: Option<char> = None;
+    let mut escaped = false;
+    for ch in line.chars() {
+        if let Some(q) = in_quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == q {
+                in_quote = None;
+            }
+            continue;
+        }
+        if ch == '"' || ch == '\'' {
+            in_quote = Some(ch);
+            continue;
+        }
+        if ch == needle {
+            count += 1;
+        }
+    }
+    count
+}
+
+fn split_key_value(line: &str) -> Option<(&str, &str)> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        return None;
+    }
+    let idx = trimmed.find(": ").or_else(|| {
+        trimmed
+            .find(':')
+            .filter(|&p| p > 0 && p + 1 < trimmed.len() && !trimmed[p..].starts_with("://"))
+    })?;
+    let key = trimmed[..idx].trim();
+    let val = trimmed[idx + 1..].trim();
+    if key.is_empty()
+        || val.is_empty()
+        || key.chars().count() > 28
+        || key.contains('.')
+        || key.split_whitespace().count() > 4
+    {
+        return None;
+    }
+    Some((key, val))
+}
+
+fn looks_like_key_value_table(lines: &[&str]) -> bool {
+    let non_empty: Vec<&str> = lines
+        .iter()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .collect();
+    if non_empty.len() < 2 {
+        return false;
+    }
+    let kv_count = non_empty
+        .iter()
+        .filter(|l| split_key_value(l).is_some())
+        .count();
+    kv_count >= 2 && kv_count * 2 >= non_empty.len()
+}
+
+fn format_key_value_table(lines: &[&str]) -> String {
+    let mut out = Vec::new();
+    for raw in lines {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Some((k, v)) = split_key_value(trimmed) {
+            let ck = clean_inline_spacing(k);
+            let cv = clean_punctuation_spacing(&clean_inline_spacing(v));
+            out.push(format!("{ck}: {cv}"));
+        } else {
+            out.push(clean_punctuation_spacing(&clean_inline_spacing(trimmed)));
+        }
+    }
+    out.join("\n")
 }
 
 fn parse_list_prefix(trimmed: &str) -> Option<(String, &str)> {
@@ -477,5 +725,37 @@ mod tests {
             "cargo clippy --all-targets -- -D warnings"
         );
         assert_eq!(join_single_line("你 好\n世 界"), "你好世界");
+    }
+
+    #[test]
+    fn smart_format_pretty_prints_json_with_curly_quotes_and_trailing_commas() {
+        let raw = r#"{“mode”: “byok”, “port”: 8080, “ok”: true,}"#;
+        let res = smart_format(raw);
+        assert_eq!(res.kind, SmartFormatKind::Json);
+        assert!(res.text.contains("  \"mode\": \"byok\","));
+        assert!(res.text.contains("  \"port\": 8080"));
+        assert!(res.text.contains("  \"ok\": true"));
+    }
+
+    #[test]
+    fn smart_format_auto_indents_flattened_code_and_fixes_operator_spacing() {
+        let raw = "fn main() {\nlet x = std :: env :: args( );\nprintln!( “hi” , x ) ;\n}";
+        let res = smart_format(raw);
+        assert_eq!(res.kind, SmartFormatKind::Code);
+        assert_eq!(
+            res.text,
+            "fn main() {\n    let x = std::env::args();\n    println!(\"hi\", x);\n}"
+        );
+    }
+
+    #[test]
+    fn smart_format_detects_key_value_metadata_blocks() {
+        let raw = "Host : api.openrouter.ai\nStatus : 200 OK\nLatency : 142 ms";
+        let res = smart_format(raw);
+        assert_eq!(res.kind, SmartFormatKind::Table);
+        assert_eq!(
+            res.text,
+            "Host: api.openrouter.ai\nStatus: 200 OK\nLatency: 142 ms"
+        );
     }
 }

@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
-use tray_icon::{Icon, TrayIconBuilder};
+use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::WindowsAndMessaging::{
     DispatchMessageW, GetMessageW, PostQuitMessage, PostThreadMessageW, TranslateMessage, MSG,
@@ -153,6 +153,7 @@ pub fn spawn_tray_and_hotkey_thread(
             let icon = build_tray_icon();
             let tray = match TrayIconBuilder::new()
                 .with_menu(Box::new(menu))
+                .with_menu_on_left_click(false)
                 .with_tooltip(format!("Reticle ({})", initial_config.hotkey))
                 .with_icon(icon)
                 .build()
@@ -296,6 +297,21 @@ pub fn spawn_tray_and_hotkey_thread(
                 }
             }));
 
+            // Left-click on tray icon directly triggers interactive snip (right-click opens menu).
+            let click_ui_tx = ui_tx.clone();
+            let click_egui_slot = Arc::clone(&egui_slot);
+            TrayIconEvent::set_event_handler(Some(move |event: TrayIconEvent| {
+                if let TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    button_state: MouseButtonState::Up,
+                    ..
+                } = event
+                {
+                    let _ = click_ui_tx.send(UiEvent::TriggerSnip(SnipMode::Interactive));
+                    wake_ui(&click_egui_slot);
+                }
+            }));
+
             // Global hotkey callback
             let hk_ui_tx = ui_tx.clone();
             let hk_egui_slot = Arc::clone(&egui_slot);
@@ -367,6 +383,7 @@ pub fn spawn_tray_and_hotkey_thread(
             }
 
             // Cleanly unregister handlers before thread exits.
+            TrayIconEvent::set_event_handler::<fn(TrayIconEvent)>(None);
             MenuEvent::set_event_handler::<fn(MenuEvent)>(None);
             GlobalHotKeyEvent::set_event_handler::<fn(GlobalHotKeyEvent)>(None);
             drop(hotkey_reg);

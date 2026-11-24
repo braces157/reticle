@@ -1,7 +1,7 @@
 use crate::capture::{capture_virtual_screen, CroppedImage, ScreenRect};
 use crate::clipboard;
 use crate::config::{self, AppConfig};
-use crate::ocr_format;
+use crate::ocr_format::{self, SmartFormatKind};
 use crate::pin::PinManager;
 use crate::prefetch::{ActionAttach, OcrAttach, PrefetchManager};
 use crate::providers::{build_http_client, SnipAction, SnipError, SnipOutput};
@@ -44,6 +44,7 @@ pub(crate) enum PopupContent {
     Ocr {
         text: String,
         raw_text: String,
+        format_kind: Option<SmartFormatKind>,
         format_badge: Option<&'static str>,
     },
     Error {
@@ -373,6 +374,7 @@ impl SnipPopupApp {
                     self.content = PopupContent::Ocr {
                         text: trimmed.to_string(),
                         raw_text: trimmed.to_string(),
+                        format_kind: None,
                         format_badge: None,
                     };
                     let pos = self.compute_popup_pos(ctx, anchor, height);
@@ -787,11 +789,15 @@ impl SnipPopupApp {
 
     pub(crate) fn apply_smart_format_ocr(&mut self, ctx: &egui::Context) {
         let formatted_copy = if let PopupContent::Ocr {
-            text, format_badge, ..
+            text,
+            format_kind,
+            format_badge,
+            ..
         } = &mut self.content
         {
             let res = ocr_format::smart_format(text);
             *text = res.text;
+            *format_kind = Some(res.kind);
             *format_badge = Some(res.kind.label());
             Some(text.clone())
         } else {
@@ -808,10 +814,14 @@ impl SnipPopupApp {
 
     pub(crate) fn apply_join_ocr(&mut self, ctx: &egui::Context) {
         let joined_copy = if let PopupContent::Ocr {
-            text, format_badge, ..
+            text,
+            format_kind,
+            format_badge,
+            ..
         } = &mut self.content
         {
             *text = ocr_format::join_single_line(text);
+            *format_kind = None;
             *format_badge = Some("1 Line");
             Some(text.clone())
         } else {
@@ -830,10 +840,12 @@ impl SnipPopupApp {
         let reset_copy = if let PopupContent::Ocr {
             text,
             raw_text,
+            format_kind,
             format_badge,
         } = &mut self.content
         {
             *text = raw_text.clone();
+            *format_kind = None;
             *format_badge = None;
             Some(text.clone())
         } else {

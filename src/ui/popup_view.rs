@@ -1,4 +1,5 @@
 use crate::providers::SnipAction;
+use crate::ui::ocr_highlight;
 use crate::ui::popup::{
     PopupContent, SnipPopupApp, COPY_FEEDBACK_DURATION, POPUP_HEIGHT_MAX_RESULT,
 };
@@ -565,34 +566,51 @@ fn render_body(app: &mut SnipPopupApp, ui: &mut egui::Ui, ctx: &egui::Context) -
             if let PopupContent::Ocr {
                 text,
                 raw_text,
+                format_kind,
                 format_badge,
             } = &mut app.content
             {
                 let is_modified = *text != *raw_text;
-                let use_mono = *format_badge == Some("Code");
-                let status_text = match *format_badge {
-                    Some(kind) => format!("FORMATTED · {}", kind.to_ascii_uppercase()),
-                    None if is_modified => "OCR · EDITED".to_string(),
-                    None => "OCR · EDITABLE".to_string(),
+                let active_kind = *format_kind;
+                let (badge_fill, badge_stroke, badge_text_col, badge_dot) =
+                    ocr_highlight::format_badge_palette(active_kind);
+                let status_label = match *format_badge {
+                    Some(kind) => kind.to_ascii_uppercase(),
+                    None if is_modified => "EDITED".to_string(),
+                    None => "EDITABLE".to_string(),
                 };
+                let char_count = text.chars().count();
+                let line_count = text.lines().count().max(1);
 
                 let outer = ui.vertical(|ui| {
                     ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new(status_text)
-                                .size(10.0)
-                                .color(if format_badge.is_some() {
-                                    theme::ACCENT_PICK
-                                } else {
-                                    theme::TEXT_MUTED
-                                }),
-                        );
-                        if is_modified {
-                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        // Semantic colored status pill with glowing indicator dot
+                        Frame::new()
+                            .fill(badge_fill)
+                            .stroke(Stroke::new(1.0, badge_stroke))
+                            .corner_radius(CornerRadius::same(10))
+                            .inner_margin(Margin::symmetric(8, 2))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing.x = 5.0;
+                                    let (dot_rect, _) =
+                                        ui.allocate_exact_size(Vec2::new(5.0, 12.0), Sense::hover());
+                                    ui.painter().circle_filled(dot_rect.center(), 2.4, badge_dot);
+                                    ui.label(
+                                        RichText::new(status_label)
+                                            .size(9.8)
+                                            .color(badge_text_col),
+                                    );
+                                });
+                            });
+
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            ui.spacing_mut().item_spacing.x = 8.0;
+                            if is_modified {
                                 let reset_btn = egui::Button::new(
                                     RichText::new("Reset")
                                         .size(10.5)
-                                        .color(theme::TEXT_TERTIARY),
+                                        .color(theme::TEXT_SECONDARY),
                                 )
                                 .fill(Color32::TRANSPARENT)
                                 .stroke(Stroke::NONE);
@@ -603,15 +621,22 @@ fn render_body(app: &mut SnipPopupApp, ui: &mut egui::Ui, ctx: &egui::Context) -
                                 if r.clicked() {
                                     reset_ocr = true;
                                 }
-                            });
-                        }
+                            }
+                            ui.label(
+                                RichText::new(format!("{char_count} chars · {line_count}L"))
+                                    .size(10.0)
+                                    .color(theme::TEXT_MUTED),
+                            );
+                        });
                     });
-                    ui.add_space(6.0);
+                    ui.add_space(7.0);
 
                     let editor_id = ui.scope_id().with("ocr_inline_editor");
                     let is_focused = ui.memory(|m| m.has_focus(editor_id));
                     let card_stroke = if is_focused {
                         Stroke::new(1.0, theme::ACCENT_PICK)
+                    } else if active_kind.is_some() {
+                        Stroke::new(1.0, badge_stroke)
                     } else {
                         Stroke::new(1.0, theme::BORDER_HAIRLINE)
                     };
@@ -619,8 +644,8 @@ fn render_body(app: &mut SnipPopupApp, ui: &mut egui::Ui, ctx: &egui::Context) -
                     Frame::new()
                         .fill(theme::BG_CARD)
                         .stroke(card_stroke)
-                        .corner_radius(CornerRadius::same(10))
-                        .inner_margin(Margin::symmetric(11, 9))
+                        .corner_radius(CornerRadius::same(11))
+                        .inner_margin(Margin::symmetric(12, 10))
                         .show(ui, |ui| {
                             ui.set_min_width(ui.available_width());
                             let max_scroll_h = (POPUP_HEIGHT_MAX_RESULT - 160.0).max(120.0);
@@ -628,18 +653,21 @@ fn render_body(app: &mut SnipPopupApp, ui: &mut egui::Ui, ctx: &egui::Context) -
                                 .max_height(max_scroll_h)
                                 .auto_shrink([false, true])
                                 .show(ui, |ui| {
-                                    let font = if use_mono {
-                                        FontId::monospace(12.6)
-                                    } else {
-                                        FontId::proportional(13.6)
-                                    };
+                                    let mut layouter =
+                                        |ui: &egui::Ui, string: &dyn egui::TextBuffer, wrap_width: f32| {
+                                            let job = ocr_highlight::build_ocr_layout_job(
+                                                string.as_str(),
+                                                wrap_width,
+                                                active_kind,
+                                            );
+                                            ui.fonts_mut(|f| f.layout_job(job))
+                                        };
                                     let edit = egui::TextEdit::multiline(text)
                                         .id(editor_id)
                                         .frame(Frame::NONE)
                                         .desired_width(f32::INFINITY)
                                         .desired_rows(3)
-                                        .font(font)
-                                        .text_color(theme::TEXT_PRIMARY);
+                                        .layouter(&mut layouter);
                                     let resp = ui.add(edit);
                                     if resp.changed() && format_badge.is_some() {
                                         *format_badge = None;
@@ -985,8 +1013,8 @@ fn render_footer(app: &mut SnipPopupApp, ui: &mut egui::Ui, ctx: &egui::Context)
                 }
 
                 if is_ocr_view {
-                    if action_pill_button(ui, "Format", false)
-                        .on_hover_text("Smart Format: unwrap lines, fix CJK spacing, preserve code & lists")
+                    if smart_format_pill_button(ui)
+                        .on_hover_text("Smart Format: JSON, code indent & color, key-value, lists, CJK, prose")
                         .clicked()
                     {
                         smart_format_ocr = true;
@@ -1034,6 +1062,61 @@ fn render_footer(app: &mut SnipPopupApp, ui: &mut egui::Ui, ctx: &egui::Context)
     } else if translate_ocr {
         app.dispatch_processing(ctx, SnipAction::Translate, false);
     }
+}
+
+/// Optical-blue tinted capsule CTA for Smart Format with a crisp 4-point sparkle mark.
+fn smart_format_pill_button(ui: &mut egui::Ui) -> egui::Response {
+    let font = FontId::proportional(11.6);
+    let galley = ui
+        .painter()
+        .layout_no_wrap("Format".to_string(), font, Color32::WHITE);
+    let size = Vec2::new(galley.size().x + 34.0, 27.0);
+    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+
+    let hovered = resp.hovered();
+    let down = resp.is_pointer_button_down_on();
+    if hovered {
+        ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+    }
+
+    let fill = if down {
+        Color32::from_rgb(20, 44, 68)
+    } else if hovered {
+        Color32::from_rgb(20, 38, 58)
+    } else {
+        Color32::from_rgb(15, 29, 44)
+    };
+    let border = if hovered {
+        Color32::from_rgb(58, 169, 255)
+    } else {
+        Color32::from_rgb(35, 72, 108)
+    };
+    let text_col = if hovered {
+        Color32::from_rgb(186, 230, 253)
+    } else {
+        Color32::from_rgb(125, 211, 252)
+    };
+
+    let p = ui.painter();
+    p.rect_filled(rect, CornerRadius::same(14), fill);
+    p.rect_stroke(rect, CornerRadius::same(14), Stroke::new(1.0, border), StrokeKind::Inside);
+
+    // Crisp vector sparkle (4-point diamond + micro accent star — strictly convex shapes)
+    let c = Pos2::new(rect.left() + 13.5, rect.center().y + 0.5);
+    let r_v = 4.2;
+    let r_h = 3.2;
+    let diamond = vec![
+        Pos2::new(c.x, c.y - r_v),
+        Pos2::new(c.x + r_h, c.y),
+        Pos2::new(c.x, c.y + r_v),
+        Pos2::new(c.x - r_h, c.y),
+    ];
+    p.add(egui::Shape::convex_polygon(diamond, theme::ACCENT_PICK, Stroke::NONE));
+    p.circle_filled(Pos2::new(c.x + 4.3, c.y - 3.6), 1.15, Color32::from_rgb(186, 230, 253));
+
+    let text_pos = Pos2::new(rect.left() + 23.0, rect.center().y - galley.size().y * 0.5);
+    p.galley(text_pos, galley, text_col);
+    resp
 }
 
 #[cfg(test)]
@@ -1139,6 +1222,7 @@ mod tests {
         app.content = PopupContent::Ocr {
             text: raw.to_string(),
             raw_text: raw.to_string(),
+            format_kind: None,
             format_badge: None,
         };
         let screen = Rect::from_min_size(Pos2::ZERO, Vec2::new(432.0, 240.0));
