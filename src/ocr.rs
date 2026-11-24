@@ -1,3 +1,7 @@
+#[cfg(test)]
+#[path = "ocr_hard_tests.rs"]
+mod hard_tests;
+
 use image::imageops::FilterType;
 use image::{ImageFormat, Rgba, RgbaImage};
 use thiserror::Error;
@@ -45,6 +49,157 @@ impl Drop for ComGuard {
     }
 }
 
+#[derive(Debug, Clone)]
+pub(super) struct OcrWordBox {
+    pub(super) text: String,
+    pub(super) x: f32,
+    pub(super) y: f32,
+    pub(super) width: f32,
+    pub(super) height: f32,
+}
+
+/// Reconstructs true visual lines from `OcrWord` bounding rectangles so multi-column UIs,
+/// terminal logs (`timestamp | LEVEL | message`), tables, and indented code stay on their
+/// exact horizontal rows instead of being split vertically into columns by `OcrResult::Lines()`.
+pub(super) fn reconstruct_lines_from_words(mut words: Vec<OcrWordBox>) -> String {
+    if words.is_empty() {
+        return String::new();
+    }
+    words.sort_by(|a, b| {
+        let ay = a.y + a.height * 0.5;
+        let by = b.y + b.height * 0.5;
+        ay.total_cmp(&by).then_with(|| a.x.total_cmp(&b.x))
+    });
+
+    struct Row {
+        cy_sum: f32,
+        h_sum: f32,
+        words: Vec<OcrWordBox>,
+    }
+
+    let mut rows: Vec<Row> = Vec::new();
+    for w in words {
+        let w_cy = w.y + w.height * 0.5;
+        let mut best_row: Option<usize> = None;
+        let mut best_dist = f32::MAX;
+        for (idx, row) in rows.iter().enumerate() {
+            let count = row.words.len() as f32;
+            let row_cy = row.cy_sum / count;
+            let row_h = (row.h_sum / count).max(10.0);
+            let tol = (row_h * 0.52).max(6.0);
+            let dist = (w_cy - row_cy).abs();
+            if dist <= tol && dist < best_dist {
+                best_dist = dist;
+                best_row = Some(idx);
+            }
+        }
+        if let Some(idx) = best_row {
+            let row = &mut rows[idx];
+            row.cy_sum += w_cy;
+            row.h_sum += w.height;
+            row.words.push(w);
+        } else {
+            rows.push(Row {
+                cy_sum: w_cy,
+                h_sum: w.height,
+                words: vec![w],
+            });
+        }
+    }
+
+    rows.sort_by(|a, b| {
+        let ay = a.cy_sum / a.words.len() as f32;
+        let by = b.cy_sum / b.words.len() as f32;
+        ay.total_cmp(&by)
+    });
+
+    let mut lines_out = Vec::with_capacity(rows.len());
+    for mut row in rows {
+        row.words.sort_by(|a, b| a.x.total_cmp(&b.x));
+        let mut line = String::new();
+        let mut prev_right: Option<f32> = None;
+        let mut prev_h: f32 = 12.0;
+
+        for word in row.words {
+            let tok = fix_slashed_zero_artifacts(word.text.trim());
+            if tok.is_empty() {
+                continue;
+            }
+            if !line.is_empty() {
+                let prev_ch = line.chars().last();
+                let next_ch = tok.chars().next();
+                let prev_cjk = prev_ch.is_some_and(is_cjk_or_kana_hangul);
+                let next_cjk = next_ch.is_some_and(is_cjk_or_kana_hangul);
+                let gap = prev_right.map(|r| word.x - r).unwrap_or(f32::MAX);
+                let ref_h = prev_h.max(word.height).max(10.0);
+
+                // Omit artificial spaces when Windows OCR splits a single token across tight
+                // punctuation (`.`, `:`, `_`, `/`, `(`), Rust `::` paths, dotted identifiers, or
+                // split uppercase letters (`OC` + `R`).
+                let tight_punct = gap <= ref_h * 0.24
+                    && (prev_ch.is_some_and(|c| matches!(c, '.' | ':' | '_' | '/' | '(' | '['))
+                        || next_ch.is_some_and(|c| {
+                            matches!(c, '.' | ':' | '_' | ')' | ']' | ',' | ';')
+                        }));
+                let tight_split_caps = gap <= ref_h * 0.14
+                    && prev_ch.is_some_and(|c| c.is_ascii_uppercase())
+                    && next_ch.is_some_and(|c| c.is_ascii_uppercase());
+                let double_colon = prev_ch == Some(':') && next_ch == Some(':');
+                let after_double_colon = line.ends_with("::")
+                    && gap <= ref_h * 0.55
+                    && next_ch.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_');
+                let dotted_ident = gap <= ref_h * 0.50
+                    && ((prev_ch == Some('.') && next_ch.is_some_and(|c| c.is_ascii_lowercase()))
+                        || (next_ch == Some('.')
+                            && prev_ch.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')));
+
+                let omit_space = (prev_cjk && next_cjk)
+                    || tight_punct
+                    || tight_split_caps
+                    || double_colon
+                    || after_double_colon
+                    || dotted_ident;
+                if !omit_space {
+                    line.push(' ');
+                }
+            }
+            line.push_str(&tok);
+            prev_right = Some(word.x + word.width);
+            prev_h = word.height;
+        }
+        if !line.is_empty() {
+            lines_out.push(line);
+        }
+    }
+    lines_out.join("\n")
+}
+
+/// Repairs Consolas/monospace slashed-zero `0` misrecognized by Windows OCR as `Ø` (`U+00D8`)
+/// when adjacent to ASCII digits or `=`/`-` (e.g., `396Ø` -> `3960`, `exit=Ø` -> `exit=0`),
+/// while preserving real Nordic words like `Øslo`.
+pub(super) fn fix_slashed_zero_artifacts(tok: &str) -> String {
+    if !tok.contains('Ø') && !tok.contains('ø') {
+        return tok.to_string();
+    }
+    let chars: Vec<char> = tok.chars().collect();
+    let mut out = String::with_capacity(tok.len());
+    for (i, &ch) in chars.iter().enumerate() {
+        if matches!(ch, 'Ø' | 'ø') {
+            let prev = i.checked_sub(1).and_then(|p| chars.get(p)).copied();
+            let next = chars.get(i + 1).copied();
+            let numeric_ctx = prev
+                .is_some_and(|c| c.is_ascii_digit() || matches!(c, '=' | '-' | '(' | ':' | ','))
+                || next.is_some_and(|c| c.is_ascii_digit() || matches!(c, ')' | ',' | ';' | '%'));
+            if numeric_ctx {
+                out.push('0');
+                continue;
+            }
+        }
+        out.push(ch);
+    }
+    out
+}
+
 fn recognize_with_engine(engine: &OcrEngine, bitmap: &SoftwareBitmap) -> Result<String, OcrError> {
     let async_op = engine
         .RecognizeAsync(bitmap)
@@ -57,18 +212,38 @@ fn recognize_with_engine(engine: &OcrEngine, bitmap: &SoftwareBitmap) -> Result<
         .Lines()
         .map_err(|e| OcrError::WinRt(format!("OcrResult::Lines: {e}")))?;
 
-    let mut collected = Vec::new();
+    let mut word_boxes = Vec::new();
+    let mut fallback_lines = Vec::new();
     for line in lines {
+        if let Ok(words) = line.Words() {
+            for word in words {
+                if let (Ok(text), Ok(rect)) = (word.Text(), word.BoundingRect()) {
+                    let s = text.to_string_lossy().trim().to_string();
+                    if !s.is_empty() && rect.Height > 0.0 {
+                        word_boxes.push(OcrWordBox {
+                            text: s,
+                            x: rect.X,
+                            y: rect.Y,
+                            width: rect.Width.max(0.0),
+                            height: rect.Height,
+                        });
+                    }
+                }
+            }
+        }
         if let Ok(text) = line.Text() {
-            let line_str = text.to_string_lossy();
-            let trimmed = line_str.trim();
-            if !trimmed.is_empty() {
-                collected.push(trimmed.to_string());
+            let s = text.to_string_lossy().trim().to_string();
+            if !s.is_empty() {
+                fallback_lines.push(s);
             }
         }
     }
 
-    Ok(collected.join("\n"))
+    if !word_boxes.is_empty() {
+        Ok(reconstruct_lines_from_words(word_boxes))
+    } else {
+        Ok(fallback_lines.join("\n"))
+    }
 }
 
 fn is_cjk_or_kana_hangul(ch: char) -> bool {
@@ -209,6 +384,14 @@ fn rgb_luma(r: u8, g: u8, b: u8) -> u8 {
     (0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32).clamp(0.0, 255.0) as u8
 }
 
+/// Chroma-aware luminance for dark backgrounds: averages standard luma with `max(R, G, B)`
+/// so syntax-colored blue/violet/red/orange tokens stay bright and crisp after inversion.
+fn dark_syntax_luma(r: u8, g: u8, b: u8) -> u8 {
+    let l = rgb_luma(r, g, b) as u16;
+    let m = r.max(g).max(b) as u16;
+    ((l + m) / 2) as u8
+}
+
 /// Computes Otsu's optimal binary threshold for grayscale luminance values.
 fn otsu_threshold(hist: &[u32; 256], total: u64) -> u8 {
     if total == 0 {
@@ -292,7 +475,7 @@ fn preprocess_for_ocr(src: &RgbaImage, mode: ContrastMode, max_dim: u32) -> Rgba
             let mut hist = [0u32; 256];
             let total = (rw as u64) * (rh as u64);
             for px in resized.pixels() {
-                let inv_luma = 255 - rgb_luma(px[0], px[1], px[2]);
+                let inv_luma = 255 - dark_syntax_luma(px[0], px[1], px[2]);
                 hist[inv_luma as usize] += 1;
             }
             // Use 1st..98th percentile so stray 1px window borders don't defeat contrast stretching
@@ -315,7 +498,7 @@ fn preprocess_for_ocr(src: &RgbaImage, mode: ContrastMode, max_dim: u32) -> Rgba
             let stretch = span > 16.0;
 
             for (x, y, px) in resized.enumerate_pixels() {
-                let inv = 255 - rgb_luma(px[0], px[1], px[2]);
+                let inv = 255 - dark_syntax_luma(px[0], px[1], px[2]);
                 let mapped = if stretch {
                     (((inv.saturating_sub(lo)) as f32 / span) * 255.0).clamp(0.0, 255.0) as u8
                 } else {
@@ -328,13 +511,21 @@ fn preprocess_for_ocr(src: &RgbaImage, mode: ContrastMode, max_dim: u32) -> Rgba
             let mut hist = [0u32; 256];
             let total = (rw as u64) * (rh as u64);
             for px in resized.pixels() {
-                let l = rgb_luma(px[0], px[1], px[2]);
+                let l = if invert {
+                    dark_syntax_luma(px[0], px[1], px[2])
+                } else {
+                    rgb_luma(px[0], px[1], px[2])
+                };
                 let v = if invert { 255 - l } else { l };
                 hist[v as usize] += 1;
             }
             let threshold = otsu_threshold(&hist, total);
             for (x, y, px) in resized.enumerate_pixels() {
-                let l = rgb_luma(px[0], px[1], px[2]);
+                let l = if invert {
+                    dark_syntax_luma(px[0], px[1], px[2])
+                } else {
+                    rgb_luma(px[0], px[1], px[2])
+                };
                 let v = if invert { 255 - l } else { l };
                 // Soft binarization keeps anti-aliased edge smoothness while crushing low-contrast gray
                 let out_v = if v < threshold { 0 } else { 255 };
@@ -703,7 +894,7 @@ pub(crate) mod tests {
         );
     }
 
-    fn has_cjk_ocr_pack() -> bool {
+    pub(super) fn has_cjk_ocr_pack() -> bool {
         let _com = ComGuard::init_mta();
         OcrEngine::AvailableRecognizerLanguages()
             .ok()
