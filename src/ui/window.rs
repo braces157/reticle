@@ -101,10 +101,10 @@ pub fn estimate_result_height(output: &SnipOutput, ocr_expanded: bool) -> f32 {
 pub fn estimate_ocr_height(text: &str) -> f32 {
     let wrapped: usize = text
         .lines()
-        .map(|l| (l.chars().count() / 46) + 1)
+        .map(|l| (l.chars().count() / 44) + 1)
         .sum();
-    let h = 118.0 + (wrapped.max(1) as f32) * 21.0;
-    h.clamp(POPUP_HEIGHT_MIN_RESULT, POPUP_HEIGHT_MAX_RESULT)
+    let h = 152.0 + (wrapped.max(2) as f32) * 21.0;
+    h.clamp(POPUP_HEIGHT_MIN_RESULT + 24.0, POPUP_HEIGHT_MAX_RESULT)
 }
 
 /// Computes the popup top-left in logical points relative to `anchor` and the active monitor:

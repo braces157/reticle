@@ -1,6 +1,7 @@
 use crate::capture::{capture_virtual_screen, CroppedImage, ScreenRect};
 use crate::clipboard;
 use crate::config::{self, AppConfig};
+use crate::ocr_format;
 use crate::pin::PinManager;
 use crate::prefetch::{ActionAttach, OcrAttach, PrefetchManager};
 use crate::providers::{build_http_client, SnipAction, SnipError, SnipOutput};
@@ -42,6 +43,8 @@ pub(crate) enum PopupContent {
     },
     Ocr {
         text: String,
+        raw_text: String,
+        format_badge: Option<&'static str>,
     },
     Error {
         title: String,
@@ -369,6 +372,8 @@ impl SnipPopupApp {
                     let height = window::estimate_ocr_height(trimmed);
                     self.content = PopupContent::Ocr {
                         text: trimmed.to_string(),
+                        raw_text: trimmed.to_string(),
+                        format_badge: None,
                     };
                     let pos = self.compute_popup_pos(ctx, anchor, height);
                     self.show_popup_at(ctx, pos, Vec2::new(POPUP_WIDTH, height));
@@ -771,12 +776,75 @@ impl SnipPopupApp {
                     output.original_text.clone()
                 }
             }
-            PopupContent::Ocr { text } if !text.is_empty() => Some(text.clone()),
+            PopupContent::Ocr { text, .. } if !text.is_empty() => Some(text.clone()),
             _ => None,
         };
         if let Some(text) = payload {
             Self::copy_to_clipboard(ctx, &text);
             self.copied_at = Some(Instant::now());
+        }
+    }
+
+    pub(crate) fn apply_smart_format_ocr(&mut self, ctx: &egui::Context) {
+        let formatted_copy = if let PopupContent::Ocr {
+            text, format_badge, ..
+        } = &mut self.content
+        {
+            let res = ocr_format::smart_format(text);
+            *text = res.text;
+            *format_badge = Some(res.kind.label());
+            Some(text.clone())
+        } else {
+            None
+        };
+        if let Some(updated) = formatted_copy {
+            if !updated.is_empty() {
+                Self::copy_to_clipboard(ctx, &updated);
+                self.copied_at = Some(Instant::now());
+            }
+            ctx.request_repaint();
+        }
+    }
+
+    pub(crate) fn apply_join_ocr(&mut self, ctx: &egui::Context) {
+        let joined_copy = if let PopupContent::Ocr {
+            text, format_badge, ..
+        } = &mut self.content
+        {
+            *text = ocr_format::join_single_line(text);
+            *format_badge = Some("1 Line");
+            Some(text.clone())
+        } else {
+            None
+        };
+        if let Some(updated) = joined_copy {
+            if !updated.is_empty() {
+                Self::copy_to_clipboard(ctx, &updated);
+                self.copied_at = Some(Instant::now());
+            }
+            ctx.request_repaint();
+        }
+    }
+
+    pub(crate) fn reset_ocr_text(&mut self, ctx: &egui::Context) {
+        let reset_copy = if let PopupContent::Ocr {
+            text,
+            raw_text,
+            format_badge,
+        } = &mut self.content
+        {
+            *text = raw_text.clone();
+            *format_badge = None;
+            Some(text.clone())
+        } else {
+            None
+        };
+        if let Some(raw) = reset_copy {
+            if !raw.is_empty() {
+                Self::copy_to_clipboard(ctx, &raw);
+                self.copied_at = Some(Instant::now());
+            }
+            ctx.request_repaint();
         }
     }
 
@@ -818,12 +886,15 @@ impl eframe::App for SnipPopupApp {
         }
         self.apply_dwm_styling_once();
 
-        if ctx.input(|i| i.key_pressed(Key::Escape)) {
+        let editing_text = ctx.egui_wants_keyboard_input();
+        if !editing_text && ctx.input(|i| i.key_pressed(Key::Escape)) {
             self.hide_popup(&ctx);
             return;
         }
 
-        if ctx.input(|i| i.modifiers.matches_logically(Modifiers::CTRL) && i.key_pressed(Key::C)) {
+        if !editing_text
+            && ctx.input(|i| i.modifiers.matches_logically(Modifiers::CTRL) && i.key_pressed(Key::C))
+        {
             self.copy_primary_result(&ctx);
         }
 

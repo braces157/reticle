@@ -6,6 +6,7 @@ mod config;
 mod hotkey;
 mod logging;
 mod ocr;
+mod ocr_format;
 mod pin;
 mod prefetch;
 mod providers;

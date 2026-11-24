@@ -1,5 +1,7 @@
 use crate::providers::SnipAction;
-use crate::ui::popup::{PopupContent, SnipPopupApp, COPY_FEEDBACK_DURATION};
+use crate::ui::popup::{
+    PopupContent, SnipPopupApp, COPY_FEEDBACK_DURATION, POPUP_HEIGHT_MAX_RESULT,
+};
 use crate::ui::theme;
 use egui::{
     Align, Color32, CornerRadius, CursorIcon, FontId, Frame, Layout, Margin, Panel, Pos2, Rect,
@@ -442,7 +444,7 @@ fn render_header(app: &mut SnipPopupApp, ui: &mut egui::Ui, ctx: &egui::Context)
                                 }
                             }
                         });
-                } else if let PopupContent::Ocr { ref text } = app.content {
+                } else if let PopupContent::Ocr { ref text, .. } = app.content {
                     let chars = text.chars().count();
                     let lines = text.lines().count();
                     ui.label(
@@ -555,10 +557,102 @@ fn render_body(app: &mut SnipPopupApp, ui: &mut egui::Ui, ctx: &egui::Context) -
     let has_last_region = app.last_crop.is_some();
     let active_action = app.active_action;
 
+    let mut reset_ocr = false;
+
     Frame::new()
         .inner_margin(Margin::symmetric(16, 15))
-        .show(ui, |ui| match &app.content {
-            PopupContent::Hidden => {}
+        .show(ui, |ui| {
+            if let PopupContent::Ocr {
+                text,
+                raw_text,
+                format_badge,
+            } = &mut app.content
+            {
+                let is_modified = *text != *raw_text;
+                let use_mono = *format_badge == Some("Code");
+                let status_text = match *format_badge {
+                    Some(kind) => format!("FORMATTED · {}", kind.to_ascii_uppercase()),
+                    None if is_modified => "OCR · EDITED".to_string(),
+                    None => "OCR · EDITABLE".to_string(),
+                };
+
+                let outer = ui.vertical(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new(status_text)
+                                .size(10.0)
+                                .color(if format_badge.is_some() {
+                                    theme::ACCENT_PICK
+                                } else {
+                                    theme::TEXT_MUTED
+                                }),
+                        );
+                        if is_modified {
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                let reset_btn = egui::Button::new(
+                                    RichText::new("Reset")
+                                        .size(10.5)
+                                        .color(theme::TEXT_TERTIARY),
+                                )
+                                .fill(Color32::TRANSPARENT)
+                                .stroke(Stroke::NONE);
+                                let r = ui.add(reset_btn);
+                                if r.hovered() {
+                                    ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+                                }
+                                if r.clicked() {
+                                    reset_ocr = true;
+                                }
+                            });
+                        }
+                    });
+                    ui.add_space(6.0);
+
+                    let editor_id = ui.scope_id().with("ocr_inline_editor");
+                    let is_focused = ui.memory(|m| m.has_focus(editor_id));
+                    let card_stroke = if is_focused {
+                        Stroke::new(1.0, theme::ACCENT_PICK)
+                    } else {
+                        Stroke::new(1.0, theme::BORDER_HAIRLINE)
+                    };
+
+                    Frame::new()
+                        .fill(theme::BG_CARD)
+                        .stroke(card_stroke)
+                        .corner_radius(CornerRadius::same(10))
+                        .inner_margin(Margin::symmetric(11, 9))
+                        .show(ui, |ui| {
+                            ui.set_min_width(ui.available_width());
+                            let max_scroll_h = (POPUP_HEIGHT_MAX_RESULT - 160.0).max(120.0);
+                            ScrollArea::vertical()
+                                .max_height(max_scroll_h)
+                                .auto_shrink([false, true])
+                                .show(ui, |ui| {
+                                    let font = if use_mono {
+                                        FontId::monospace(12.6)
+                                    } else {
+                                        FontId::proportional(13.6)
+                                    };
+                                    let edit = egui::TextEdit::multiline(text)
+                                        .id(editor_id)
+                                        .frame(Frame::NONE)
+                                        .desired_width(f32::INFINITY)
+                                        .desired_rows(3)
+                                        .font(font)
+                                        .text_color(theme::TEXT_PRIMARY);
+                                    let resp = ui.add(edit);
+                                    if resp.changed() && format_badge.is_some() {
+                                        *format_badge = None;
+                                    }
+                                });
+                        });
+                });
+                measured = Some(outer.response.rect.height());
+                return;
+            }
+
+            match &app.content {
+            PopupContent::Hidden | PopupContent::Ocr { .. } => {}
             PopupContent::Loading { action, .. } => {
                 let r = ui.horizontal(|ui| {
                     let verb = match action {
@@ -660,26 +754,6 @@ fn render_body(app: &mut SnipPopupApp, ui: &mut egui::Ui, ctx: &egui::Context) -
                     });
                 });
                 measured = Some(r.response.rect.height());
-            }
-            PopupContent::Ocr { text } => {
-                let text = text.clone();
-                let scroll_out = ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        let inner = ui.vertical(|ui| {
-                            ui.add(
-                                egui::Label::new(
-                                    RichText::new(&text)
-                                        .size(13.8)
-                                        .color(theme::TEXT_PRIMARY),
-                                )
-                                .wrap()
-                                .selectable(true),
-                            );
-                        });
-                        inner.response.rect.height()
-                    });
-                measured = Some(scroll_out.inner);
             }
             PopupContent::Result { output, .. } => {
                 let output = output.clone();
@@ -857,8 +931,12 @@ fn render_body(app: &mut SnipPopupApp, ui: &mut egui::Ui, ctx: &egui::Context) -
                     app.toggle_ocr_expanded(ctx);
                 }
             }
+            }
         });
 
+    if reset_ocr {
+        app.reset_ocr_text(ctx);
+    }
     if open_config_clicked {
         app.open_config();
     }
@@ -884,12 +962,14 @@ fn render_footer(app: &mut SnipPopupApp, ui: &mut egui::Ui, ctx: &egui::Context)
         }
     );
     let mut translate_ocr = false;
+    let mut smart_format_ocr = false;
+    let mut join_ocr = false;
 
     Frame::new()
         .inner_margin(Margin::symmetric(14, 7))
         .show(ui, |ui| {
             ui.horizontal_centered(|ui| {
-                ui.spacing_mut().item_spacing.x = 8.0;
+                ui.spacing_mut().item_spacing.x = 6.0;
                 let just_copied = app
                     .copied_at
                     .map(|t| t.elapsed() < COPY_FEEDBACK_DURATION)
@@ -902,6 +982,21 @@ fn render_footer(app: &mut SnipPopupApp, ui: &mut egui::Ui, ctx: &egui::Context)
                     .clicked()
                 {
                     app.copy_primary_result(ctx);
+                }
+
+                if is_ocr_view {
+                    if action_pill_button(ui, "Format", false)
+                        .on_hover_text("Smart Format: unwrap lines, fix CJK spacing, preserve code & lists")
+                        .clicked()
+                    {
+                        smart_format_ocr = true;
+                    }
+                    if action_pill_button(ui, "Join", false)
+                        .on_hover_text("Join all lines into one clean line")
+                        .clicked()
+                    {
+                        join_ocr = true;
+                    }
                 }
 
                 if is_ocr_view
@@ -932,7 +1027,11 @@ fn render_footer(app: &mut SnipPopupApp, ui: &mut egui::Ui, ctx: &egui::Context)
             });
         });
 
-    if translate_ocr {
+    if smart_format_ocr {
+        app.apply_smart_format_ocr(ctx);
+    } else if join_ocr {
+        app.apply_join_ocr(ctx);
+    } else if translate_ocr {
         app.dispatch_processing(ctx, SnipAction::Translate, false);
     }
 }
@@ -1030,5 +1129,57 @@ mod tests {
             matches!(app.content, PopupContent::Hidden),
             "Close (×) button click must hide popup"
         );
+    }
+
+    #[test]
+    fn ocr_view_renders_inline_editor_and_supports_smart_format_join_and_reset() {
+        let ctx = egui::Context::default();
+        let (mut app, _rt) = test_popup_with_error(&ctx);
+        let raw = "Hello   wor-\nld ,\nnext line .";
+        app.content = PopupContent::Ocr {
+            text: raw.to_string(),
+            raw_text: raw.to_string(),
+            format_badge: None,
+        };
+        let screen = Rect::from_min_size(Pos2::ZERO, Vec2::new(432.0, 240.0));
+        run_frame(
+            &ctx,
+            &mut app,
+            egui::RawInput {
+                screen_rect: Some(screen),
+                ..Default::default()
+            },
+        );
+
+        app.apply_smart_format_ocr(&ctx);
+        match &app.content {
+            PopupContent::Ocr {
+                text, format_badge, ..
+            } => {
+                assert_eq!(text, "Hello world, next line.");
+                assert_eq!(*format_badge, Some("Prose"));
+            }
+            _ => panic!("expected Ocr content"),
+        }
+
+        // Render modified state (with Reset link) and then reset back to raw OCR
+        run_frame(
+            &ctx,
+            &mut app,
+            egui::RawInput {
+                screen_rect: Some(screen),
+                ..Default::default()
+            },
+        );
+        app.reset_ocr_text(&ctx);
+        match &app.content {
+            PopupContent::Ocr {
+                text, format_badge, ..
+            } => {
+                assert_eq!(text, raw);
+                assert_eq!(*format_badge, None);
+            }
+            _ => panic!("expected Ocr content"),
+        }
     }
 }
