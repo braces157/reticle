@@ -13,6 +13,7 @@ use std::sync::Arc;
 pub enum SnipAction {
     Translate,
     ExplainCode,
+    Ocr,
 }
 
 #[derive(Debug, Clone)]
@@ -103,7 +104,8 @@ pub fn resolve_provider_kind(config: &AppConfig, action: SnipAction) -> Provider
         return ProviderKind::Free;
     }
     match (config.mode, action) {
-        (ProviderMode::Byok, _) | (ProviderMode::Free, SnipAction::ExplainCode) => {
+        (ProviderMode::Byok, _)
+        | (ProviderMode::Free, SnipAction::ExplainCode | SnipAction::Ocr) => {
             ProviderKind::Byok(config.ai_provider.provider)
         }
         (ProviderMode::Free, SnipAction::Translate) => ProviderKind::Free,

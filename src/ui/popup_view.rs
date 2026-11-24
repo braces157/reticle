@@ -94,6 +94,10 @@ pub fn render_popup(app: &mut SnipPopupApp, ui: &mut egui::Ui, ctx: &egui::Conte
                         is_streaming: true,
                         ..
                     }
+                    | PopupContent::Ocr {
+                        ai_enhancing: true,
+                        ..
+                    }
             );
             if is_streaming_bar {
                 render_loading_shimmer(ui);
@@ -568,16 +572,24 @@ fn render_body(app: &mut SnipPopupApp, ui: &mut egui::Ui, ctx: &egui::Context) -
                 raw_text,
                 format_kind,
                 format_badge,
+                ai_enhancing,
+                user_edited,
             } = &mut app.content
             {
                 let is_modified = *text != *raw_text;
                 let active_kind = *format_kind;
                 let (badge_fill, badge_stroke, badge_text_col, badge_dot) =
                     ocr_highlight::format_badge_palette(active_kind);
-                let status_label = match *format_badge {
-                    Some(kind) => kind.to_ascii_uppercase(),
-                    None if is_modified => "EDITED".to_string(),
-                    None => "EDITABLE".to_string(),
+                let status_label = if *ai_enhancing {
+                    "AI OCR…".to_string()
+                } else {
+                    match *format_badge {
+                        Some(kind) => kind.to_ascii_uppercase(),
+                        None if is_modified => "EDITED".to_string(),
+                        None => active_kind
+                            .map(|k| k.label().to_ascii_uppercase())
+                            .unwrap_or_else(|| "EDITABLE".to_string()),
+                    }
                 };
                 let char_count = text.chars().count();
                 let line_count = text.lines().count().max(1);
@@ -595,11 +607,23 @@ fn render_body(app: &mut SnipPopupApp, ui: &mut egui::Ui, ctx: &egui::Context) -
                                     ui.spacing_mut().item_spacing.x = 5.0;
                                     let (dot_rect, _) =
                                         ui.allocate_exact_size(Vec2::new(5.0, 12.0), Sense::hover());
-                                    ui.painter().circle_filled(dot_rect.center(), 2.4, badge_dot);
+                                    ui.painter().circle_filled(
+                                        dot_rect.center(),
+                                        2.4,
+                                        if *ai_enhancing {
+                                            theme::ACCENT_PICK
+                                        } else {
+                                            badge_dot
+                                        },
+                                    );
                                     ui.label(
                                         RichText::new(status_label)
                                             .size(9.8)
-                                            .color(badge_text_col),
+                                            .color(if *ai_enhancing {
+                                                theme::ACCENT_PICK
+                                            } else {
+                                                badge_text_col
+                                            }),
                                     );
                                 });
                             });
@@ -669,8 +693,11 @@ fn render_body(app: &mut SnipPopupApp, ui: &mut egui::Ui, ctx: &egui::Context) -
                                         .desired_rows(3)
                                         .layouter(&mut layouter);
                                     let resp = ui.add(edit);
-                                    if resp.changed() && format_badge.is_some() {
-                                        *format_badge = None;
+                                    if resp.changed() {
+                                        *user_edited = true;
+                                        if format_badge.is_some() {
+                                            *format_badge = None;
+                                        }
                                     }
                                 });
                         });
@@ -686,6 +713,7 @@ fn render_body(app: &mut SnipPopupApp, ui: &mut egui::Ui, ctx: &egui::Context) -
                     let verb = match action {
                         SnipAction::Translate => "Translating…",
                         SnipAction::ExplainCode => "Explaining code…",
+                        SnipAction::Ocr => "Reading text…",
                     };
                     ui.label(
                         RichText::new(verb)
@@ -1224,6 +1252,8 @@ mod tests {
             raw_text: raw.to_string(),
             format_kind: None,
             format_badge: None,
+            ai_enhancing: false,
+            user_edited: false,
         };
         let screen = Rect::from_min_size(Pos2::ZERO, Vec2::new(432.0, 240.0));
         run_frame(

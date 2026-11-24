@@ -1,9 +1,10 @@
 use crate::capture::{capture_virtual_screen, CroppedImage, ScreenRect};
 use crate::clipboard;
-use crate::config::{self, AppConfig};
+use crate::config::{self, AppConfig, ProviderMode};
 use crate::ocr_format::{self, SmartFormatKind};
 use crate::pin::PinManager;
 use crate::prefetch::{ActionAttach, OcrAttach, PrefetchManager};
+use crate::providers::byok_ai::strip_outer_code_fence;
 use crate::providers::{build_http_client, SnipAction, SnipError, SnipOutput};
 use crate::snip::save;
 use crate::snip::{
@@ -46,6 +47,8 @@ pub(crate) enum PopupContent {
         raw_text: String,
         format_kind: Option<SmartFormatKind>,
         format_badge: Option<&'static str>,
+        ai_enhancing: bool,
+        user_edited: bool,
     },
     Error {
         title: String,
@@ -356,10 +359,11 @@ impl SnipPopupApp {
         result: Result<String, String>,
     ) {
         let anchor = Some(screen_rect);
+        let use_ai_ocr = self.config.mode == ProviderMode::Byok && self.config.has_byok_key();
         match result {
             Ok(text) => {
                 let trimmed = text.trim();
-                if trimmed.is_empty() {
+                if trimmed.is_empty() && !use_ai_ocr {
                     self.show_toast(
                         ctx,
                         "No Text Detected",
@@ -368,21 +372,154 @@ impl SnipPopupApp {
                         anchor,
                     );
                 } else {
-                    Self::copy_to_clipboard(ctx, trimmed);
-                    self.copied_at = Some(Instant::now());
+                    if !trimmed.is_empty() {
+                        Self::copy_to_clipboard(ctx, trimmed);
+                        self.copied_at = Some(Instant::now());
+                    }
+                    let detected_kind = (!trimmed.is_empty()).then(|| ocr_format::detect_kind(trimmed));
                     let height = window::estimate_ocr_height(trimmed);
                     self.content = PopupContent::Ocr {
                         text: trimmed.to_string(),
                         raw_text: trimmed.to_string(),
-                        format_kind: None,
+                        format_kind: detected_kind,
                         format_badge: None,
+                        ai_enhancing: use_ai_ocr && self.last_crop.is_some(),
+                        user_edited: false,
                     };
                     let pos = self.compute_popup_pos(ctx, anchor, height);
                     self.show_popup_at(ctx, pos, Vec2::new(POPUP_WIDTH, height));
+                    if use_ai_ocr {
+                        self.start_ai_ocr_stream(ctx);
+                    }
                 }
             }
-            Err(err) => self.show_toast(ctx, "OCR Failed", err, true, anchor),
+            Err(err) => {
+                if use_ai_ocr && self.last_crop.is_some() {
+                    let height = window::estimate_ocr_height("");
+                    self.content = PopupContent::Ocr {
+                        text: String::new(),
+                        raw_text: String::new(),
+                        format_kind: None,
+                        format_badge: None,
+                        ai_enhancing: true,
+                        user_edited: false,
+                    };
+                    let pos = self.compute_popup_pos(ctx, anchor, height);
+                    self.show_popup_at(ctx, pos, Vec2::new(POPUP_WIDTH, height));
+                    self.start_ai_ocr_stream(ctx);
+                } else {
+                    self.show_toast(ctx, "OCR Failed", err, true, anchor);
+                }
+            }
         }
+    }
+
+    /// Streams verbatim Vision AI OCR into the open OCR card so syntax-colored code and tricky
+    /// backgrounds get near-100% character accuracy while still opening instantly at 0ms.
+    fn start_ai_ocr_stream(&mut self, ctx: &egui::Context) {
+        let Some((crop, doc_revision)) = self.last_crop.clone() else {
+            return;
+        };
+        self.request_id = self.request_id.wrapping_add(1);
+        let req_id = self.request_id;
+        match self.prefetch.dispatch_or_attach_action(
+            crop,
+            doc_revision,
+            SnipAction::Ocr,
+            &self.config,
+            &self.http,
+            &self.tokio_handle,
+            req_id,
+            self.ui_tx.clone(),
+            Arc::clone(&self.egui_slot),
+        ) {
+            ActionAttach::Ready(output) => {
+                self.apply_ai_ocr_final(ctx, Ok(output));
+            }
+            ActionAttach::AttachedStreaming { text_so_far, .. } => {
+                if !text_so_far.is_empty() {
+                    self.apply_ai_ocr_delta(ctx, &text_so_far);
+                }
+            }
+            ActionAttach::Miss => {}
+        }
+    }
+
+    fn apply_ai_ocr_delta(&mut self, ctx: &egui::Context, raw_stream: &str) {
+        let cleaned = strip_outer_code_fence(raw_stream);
+        if cleaned.is_empty() {
+            return;
+        }
+        if let PopupContent::Ocr {
+            text,
+            format_kind,
+            ai_enhancing,
+            user_edited,
+            ..
+        } = &mut self.content
+        {
+            if *user_edited {
+                return;
+            }
+            *text = cleaned;
+            *format_kind = Some(ocr_format::detect_kind(text));
+            *ai_enhancing = true;
+            let est_h = window::estimate_ocr_height(text);
+            self.sync_measured_height(ctx, est_h);
+            ctx.request_repaint();
+        }
+    }
+
+    fn apply_ai_ocr_final(&mut self, ctx: &egui::Context, result: Result<SnipOutput, SnipError>) {
+        let anchor = self.last_crop.as_ref().map(|(c, _)| c.screen_rect);
+        let mut copy_payload: Option<String> = None;
+        let mut show_no_text = false;
+
+        if let PopupContent::Ocr {
+            text,
+            raw_text,
+            format_kind,
+            format_badge,
+            ai_enhancing,
+            user_edited,
+        } = &mut self.content
+        {
+            *ai_enhancing = false;
+            match result {
+                Ok(output) if !output.primary_text.is_empty() => {
+                    if !*user_edited {
+                        *text = output.primary_text.clone();
+                        *raw_text = output.primary_text.clone();
+                        *format_kind = Some(ocr_format::detect_kind(text));
+                        *format_badge = Some("AI OCR");
+                        copy_payload = Some(output.primary_text);
+                    }
+                }
+                Ok(_) | Err(_) => {
+                    if text.trim().is_empty() {
+                        show_no_text = true;
+                    }
+                }
+            }
+        }
+
+        if show_no_text {
+            self.show_toast(
+                ctx,
+                "No Text Detected",
+                "Try selecting a larger or higher-contrast region.",
+                false,
+                anchor,
+            );
+            return;
+        }
+        if let Some(payload) = copy_payload {
+            Self::copy_to_clipboard(ctx, &payload);
+            self.copied_at = Some(Instant::now());
+            let est_h = window::estimate_ocr_height(&payload);
+            self.sync_measured_height(ctx, est_h);
+        }
+        ctx.request_repaint();
     }
 
     fn execute_cropped_command(
@@ -621,6 +758,10 @@ impl SnipPopupApp {
                     if request_id != self.request_id {
                         continue;
                     }
+                    if action == SnipAction::Ocr {
+                        self.apply_ai_ocr_delta(ctx, &text);
+                        continue;
+                    }
                     self.active_action = action;
                     let anchor = self.last_crop.as_ref().map(|(c, _)| c.screen_rect);
                     let output = SnipOutput {
@@ -651,6 +792,10 @@ impl SnipPopupApp {
                     result,
                 } => {
                     if request_id != self.request_id {
+                        continue;
+                    }
+                    if action == SnipAction::Ocr {
+                        self.apply_ai_ocr_final(ctx, result);
                         continue;
                     }
                     self.active_action = action;
@@ -842,11 +987,14 @@ impl SnipPopupApp {
             raw_text,
             format_kind,
             format_badge,
+            user_edited,
+            ..
         } = &mut self.content
         {
             *text = raw_text.clone();
-            *format_kind = None;
+            *format_kind = (!text.trim().is_empty()).then(|| ocr_format::detect_kind(text));
             *format_badge = None;
+            *user_edited = false;
             Some(text.clone())
         } else {
             None
@@ -910,7 +1058,14 @@ impl eframe::App for SnipPopupApp {
             self.copy_primary_result(&ctx);
         }
 
-        if matches!(self.content, PopupContent::Loading { .. }) {
+        if matches!(
+            self.content,
+            PopupContent::Loading { .. }
+                | PopupContent::Ocr {
+                    ai_enhancing: true,
+                    ..
+                }
+        ) {
             ctx.request_repaint_after(Duration::from_millis(24));
         }
 

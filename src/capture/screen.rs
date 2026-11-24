@@ -128,8 +128,8 @@ pub fn encode_rgba_to_vision_jpeg(
     height: u32,
     rgba: &[u8],
 ) -> Result<Vec<u8>, CaptureError> {
-    const MAX_VISION_EDGE: u32 = 1280;
-    const JPEG_QUALITY: u8 = 82;
+    const MAX_VISION_EDGE: u32 = 1440;
+    const JPEG_QUALITY: u8 = 86;
 
     let (enc_w, enc_h, rgb): (u32, u32, Vec<u8>) = if width > MAX_VISION_EDGE || height > MAX_VISION_EDGE
     {
@@ -541,7 +541,7 @@ mod tests {
         let jpeg = encode_rgba_to_vision_jpeg(w, h, &rgba).expect("valid vision jpeg");
         assert!(jpeg.starts_with(&[0xFF, 0xD8, 0xFF]), "must be JPEG");
         let decoded = image::load_from_memory(&jpeg).expect("decodable jpeg");
-        assert_eq!(decoded.width(), 1280);
-        assert_eq!(decoded.height(), 720);
+        assert_eq!(decoded.width(), 1440);
+        assert_eq!(decoded.height(), 810);
     }
 }

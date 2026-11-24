@@ -43,6 +43,13 @@ impl ByokAiProvider {
                  - **Watch out for**: concrete edge cases, hidden assumptions, or subtle bugs (only include this section if there is a real, non-obvious catch).\n\
                  If there is no readable code or technical text in the image, reply exactly `NO_TEXT_DETECTED`."
             ),
+            SnipAction::Ocr => {
+                "Transcribe all visible text and code from this image verbatim. \
+                 Preserve exact characters, capitalization, underscores, punctuation, symbols, indentation, and line breaks. \
+                 Output ONLY the raw transcribed text with no markdown code fences (no ```), no commentary, and no explanation. \
+                 If there is no readable text at all, reply exactly `NO_TEXT_DETECTED`."
+                    .to_string()
+            }
         }
     }
 
@@ -210,12 +217,16 @@ impl ByokAiProvider {
 
         match ai_res {
             Ok(content) => {
-                let trimmed = content.trim();
-                if trimmed.eq_ignore_ascii_case("NO_TEXT_DETECTED") && ocr_text.is_none() {
+                let cleaned = if input.action == SnipAction::Ocr {
+                    strip_outer_code_fence(&content)
+                } else {
+                    content.trim().to_string()
+                };
+                if cleaned.eq_ignore_ascii_case("NO_TEXT_DETECTED") && ocr_text.is_none() {
                     return Err(SnipError::NoTextDetected);
                 }
                 Ok(SnipOutput {
-                    primary_text: trimmed.to_string(),
+                    primary_text: cleaned,
                     original_text: ocr_text,
                     detected_language: None,
                     provider_label: self.label(),
@@ -381,6 +392,25 @@ fn build_openai_request_body(
     body
 }
 
+/// Strips an accidental outer Markdown code fence (` ```lang\n...\n``` `) if an LLM
+/// wraps verbatim Vision OCR output despite instructions.
+pub fn strip_outer_code_fence(raw: &str) -> String {
+    let trimmed = raw.trim();
+    let Some(rest) = trimmed.strip_prefix("```") else {
+        return trimmed.to_string();
+    };
+    let Some(first_nl) = rest.find('\n') else {
+        return trimmed.to_string();
+    };
+    let after_open = &rest[first_nl + 1..];
+    if let Some(body) = after_open.strip_suffix("```") {
+        body.trim_end_matches(['\r', '\n']).to_string()
+    } else {
+        // Streaming partial fence before closing ``` arrives
+        after_open.to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -469,5 +499,15 @@ mod tests {
 
         assert!(!is_openrouter_base_url("https://example.com/openrouter.ai/v1"));
         assert!(is_openrouter_base_url("https://api.openrouter.ai/v1"));
+    }
+
+    #[test]
+    fn strip_outer_code_fence_removes_markdown_wrapper_preserving_indent() {
+        let wrapped = "```rust\n    pub fn demo() {\n        println!(\"ok\");\n    }\n```";
+        assert_eq!(
+            strip_outer_code_fence(wrapped),
+            "    pub fn demo() {\n        println!(\"ok\");\n    }"
+        );
+        assert_eq!(strip_outer_code_fence("plain text"), "plain text");
     }
 }

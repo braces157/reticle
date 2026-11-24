@@ -71,19 +71,111 @@ fn recognize_with_engine(engine: &OcrEngine, bitmap: &SoftwareBitmap) -> Result<
     Ok(collected.join("\n"))
 }
 
+fn is_cjk_or_kana_hangul(ch: char) -> bool {
+    matches!(
+        ch as u32,
+        0x3040..=0x30FF | 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xAC00..=0xD7AF | 0xF900..=0xFAFF
+    )
+}
+
+fn is_fullwidth_cjk_punct(ch: char) -> bool {
+    matches!(
+        ch,
+        '：' | '，' | '。' | '！' | '？' | '；' | '、' | '（' | '）' | '「' | '」' | '『' | '』'
+            | '【' | '】' | '．' | '—' | '〔' | '〕'
+    )
+}
+
 /// Scores OCR output quality so multi-language Windows OCR picks the cleanest script match.
-/// Non-ASCII letters (CJK, Kana, Hangul, Cyrillic, Arabic, Thai, Vietnamese diacritics) carry
-/// high information density per glyph and outscore Latin-only recognizers that drop CJK text.
+/// Rewards genuine multi-character CJK/non-ASCII text while heavily penalizing CJK recognizer
+/// hallucinations (stray CJK chars, fullwidth punctuation `：）（．`, and spaced-out single-letter
+/// fragments like `e a c h` or `m 0 d e`) on English/code screenshots.
 pub fn score_ocr_text(text: &str) -> usize {
-    let mut score = 0usize;
+    let mut ascii_alpha = 0usize;
+    let mut non_ascii_alpha = 0usize;
+    let mut cjk_alpha = 0usize;
+    let mut cjk_adjacent_pairs = 0usize;
+    let mut fullwidth_punct = 0usize;
+    let mut digits = 0usize;
+    let mut prev_was_cjk = false;
+
     for ch in text.chars() {
-        if ch.is_alphabetic() {
-            score += if ch.is_ascii() { 2 } else { 6 };
-        } else if ch.is_ascii_digit() {
-            score += 1;
+        if is_cjk_or_kana_hangul(ch) {
+            cjk_alpha += 1;
+            non_ascii_alpha += 1;
+            if prev_was_cjk {
+                cjk_adjacent_pairs += 1;
+            }
+            prev_was_cjk = true;
+        } else {
+            if ch.is_alphabetic() {
+                if ch.is_ascii() {
+                    ascii_alpha += 1;
+                } else {
+                    non_ascii_alpha += 1;
+                }
+            } else if ch.is_ascii_digit() {
+                digits += 1;
+            } else if is_fullwidth_cjk_punct(ch) {
+                fullwidth_punct += 1;
+            }
+            if !ch.is_whitespace() {
+                prev_was_cjk = false;
+            }
         }
     }
-    score
+
+    let total_alpha = ascii_alpha + non_ascii_alpha;
+    if total_alpha == 0 && digits == 0 {
+        return 0;
+    }
+
+    // Genuine CJK/multilingual content has either adjacent CJK clusters (even across Windows OCR
+    // single spaces) or meaningful CJK density, rather than 1-3 stray glyphs in 98% ASCII code.
+    let genuine_cjk = cjk_alpha >= 2 && (cjk_adjacent_pairs >= 1 || cjk_alpha * 10 >= total_alpha);
+    let latin_dominant = ascii_alpha >= 12 && ascii_alpha * 10 >= total_alpha * 8;
+
+    let mut score: isize = (ascii_alpha as isize) * 2 + (digits as isize);
+
+    let non_cjk_non_ascii = non_ascii_alpha.saturating_sub(cjk_alpha);
+    score += (non_cjk_non_ascii as isize) * 5;
+
+    if genuine_cjk && !latin_dominant {
+        score += (cjk_alpha as isize) * 6;
+    } else if genuine_cjk {
+        // Mixed Latin + real CJK (e.g. bilingual media card or docs)
+        score += (cjk_alpha as isize) * 5;
+    } else if latin_dominant {
+        // Isolated stray CJK glyphs (like `还`, `的`) inside English/code are hallucinations.
+        score -= (cjk_alpha as isize) * 10;
+    } else {
+        score += (cjk_alpha as isize) * 4;
+    }
+
+    // Fullwidth CJK punctuation (`：`, `）`, `．`, `「`) inside Latin-dominant text is strong noise.
+    if latin_dominant && !genuine_cjk {
+        score -= (fullwidth_punct as isize) * 12;
+    }
+
+    // Reward clean multi-character ASCII words and penalize single-letter fragmentation (`e a c h`).
+    let mut single_ascii_run = 0usize;
+    for tok in text.split_whitespace() {
+        let len = tok.chars().count();
+        let all_ascii_alnum = tok.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        if all_ascii_alnum && len >= 3 {
+            score += 2;
+            single_ascii_run = 0;
+        } else if len == 1 && tok.chars().next().is_some_and(|c| c.is_ascii_alphanumeric() || c == '/') {
+            single_ascii_run += 1;
+            if single_ascii_run >= 2 {
+                score -= 5;
+            }
+        } else {
+            single_ascii_run = 0;
+        }
+    }
+
+    score.max(0) as usize
 }
 
 fn average_luma(img: &RgbaImage) -> f32 {
@@ -575,6 +667,22 @@ pub(crate) mod tests {
         assert!(score_ocr_text("我叫长安 Chinese") > score_ocr_text("Chinese"));
         assert!(score_ocr_text("Xin chào thế giới") > score_ocr_text("|||"));
         assert_eq!(score_ocr_text("   ...   "), 0);
+        let garbled_cjk_on_rust_code =
+            "/ / / Semantic p ill- colors 、 for e a c h smart-format m 0 d e ．\n\
+             PUb fn format—badge—palette(kind ： Option<SmartFormatKind>) 一 > （ COIO 「 52\n\
+             match kind 还\n\
+             Some(SmartFormatKind ： :C0de | SmartFormatKind · :Json\n\
+             C0t0r32 ： :from-rgb(24, 2 的 38 ） ，";
+        let clean_en_rust_code =
+            "/// Semantic pill colors (fill, stroke, text, dot) for each smart-format mode.\n\
+             pub fn format_badge_palette(kind: Option<SmartFormatKind>) -> (Color32, Color32)\n\
+             match kind {\n\
+             Some(SmartFormatKind::Code | SmartFormatKind::Json) => (\n\
+             Color32::from_rgb(24, 20, 38),";
+        assert!(
+            score_ocr_text(clean_en_rust_code) > score_ocr_text(garbled_cjk_on_rust_code),
+            "clean en-US code OCR must beat zh-Hans hallucinated output"
+        );
     }
 
     #[test]

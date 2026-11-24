@@ -31,6 +31,32 @@ pub struct SmartFormatResult {
     pub kind: SmartFormatKind,
 }
 
+/// Detects the structural kind of OCR text without modifying it (used for live editor coloring).
+pub fn detect_kind(raw: &str) -> SmartFormatKind {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return SmartFormatKind::Prose;
+    }
+    if try_format_json(trimmed).is_some() {
+        return SmartFormatKind::Json;
+    }
+    let lines: Vec<&str> = trimmed.lines().collect();
+    if looks_like_code(&lines) {
+        return SmartFormatKind::Code;
+    }
+    if looks_like_list(&lines) {
+        return SmartFormatKind::List;
+    }
+    if looks_like_key_value_table(&lines) {
+        return SmartFormatKind::Table;
+    }
+    if has_significant_cjk(trimmed) {
+        SmartFormatKind::Cjk
+    } else {
+        SmartFormatKind::Prose
+    }
+}
+
 /// Automatically detects whether OCR text is JSON, code, key-value pairs, a bullet/numbered list,
 /// CJK text, or prose, and applies tailored cleanup without destroying intentional structure.
 pub fn smart_format(raw: &str) -> SmartFormatResult {

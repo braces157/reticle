@@ -169,9 +169,9 @@ impl SnipProvider for FreeTranslateProvider {
 
     fn process<'a>(&'a self, input: SnipInput) -> BoxFuture<'a, Result<SnipOutput, SnipError>> {
         Box::pin(async move {
-            if input.action == SnipAction::ExplainCode {
+            if matches!(input.action, SnipAction::ExplainCode | SnipAction::Ocr) {
                 return Err(SnipError::UnsupportedAction(
-                    "Explain Code requires a BYOK API key in config.json".to_string(),
+                    "This action requires a BYOK API key in config.json".to_string(),
                 ));
             }
 
