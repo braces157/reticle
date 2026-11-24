@@ -18,10 +18,11 @@ use egui::{
     ViewportBuilder, ViewportCommand, ViewportId,
 };
 use windows::core::w;
+use windows::Win32::Foundation::RECT;
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_CLOAK};
 use windows::Win32::UI::WindowsAndMessaging::{
-    FindWindowW, SetForegroundWindow, SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOREDRAW,
-    SWP_SHOWWINDOW,
+    FindWindowW, GetWindowRect, SetForegroundWindow, SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE,
+    SWP_NOREDRAW, SWP_NOSENDCHANGING, SWP_SHOWWINDOW,
 };
 
 pub const OVERLAY_VIEWPORT_TITLE: &str = "SnipToolOverlayViewport";
@@ -55,7 +56,8 @@ pub struct SnipOverlaySession {
     stage: OverlayStage,
     mode: SnipMode,
     frames_rendered: u8,
-    positioned_win32: bool,
+    reposition_attempts: u8,
+    window_phys_rect: ScreenRect,
     toolbar_id: Id,
     text_area_id: Id,
     text_edit_id: Id,
@@ -81,6 +83,7 @@ impl SnipOverlaySession {
         );
         let texture = ctx.load_texture("snip-frozen-desktop", color_image, TextureOptions::NEAREST);
         let monitors = monitor_rects();
+        let initial_bounds = capture.bounds();
 
         Self {
             capture,
@@ -89,7 +92,8 @@ impl SnipOverlaySession {
             stage: OverlayStage::Idle,
             mode,
             frames_rendered: 0,
-            positioned_win32: false,
+            reposition_attempts: 0,
+            window_phys_rect: initial_bounds,
             toolbar_id: Id::unique("snip-floating-toolbar"),
             text_area_id: Id::unique("snip-inline-text-area"),
             text_edit_id: Id::unique("snip-inline-text-edit"),
@@ -138,20 +142,17 @@ impl SnipOverlaySession {
             .with_clamp_size_to_monitor_size(false)
     }
 
-    pub fn viewport_builder(&self, ctx: &egui::Context) -> ViewportBuilder {
-        let ppp = ctx.pixels_per_point().max(1.0);
-        let b = self.capture.bounds();
-        Self::active_viewport_builder_for_bounds(b, ppp)
+    pub fn viewport_builder(&self) -> ViewportBuilder {
+        Self::active_viewport_builder()
     }
 
-    fn active_viewport_builder_for_bounds(b: ScreenRect, ppp: f32) -> ViewportBuilder {
+    fn active_viewport_builder() -> ViewportBuilder {
         // Keep all window-creation attributes identical to `hidden_viewport_builder()` so
-        // `ViewportBuilder::patch` only emits position/size/visible commands and never requests
-        // window recreation (which panics in eframe 0.37 when root is hidden).
-        Self::base_viewport_builder()
-            .with_visible(true)
-            .with_position([b.x as f32 / ppp, b.y as f32 / ppp])
-            .with_inner_size([b.width as f32 / ppp, b.height as f32 / ppp])
+        // `ViewportBuilder::patch` never requests window recreation (which panics in eframe 0.37
+        // when root is hidden). Deliberately omit `with_position` / `with_inner_size` because
+        // winit converts logical coords using the wrong monitor's DPI on mixed-DPI multi-monitor
+        // setups; exact physical placement is handled exclusively via Win32 `SetWindowPos`.
+        Self::base_viewport_builder().with_visible(true)
     }
 
     pub fn hidden_viewport_builder() -> ViewportBuilder {
@@ -160,44 +161,45 @@ impl SnipOverlaySession {
             .with_visible(false)
     }
 
+    fn sync_window_phys_rect(&mut self, expected: ScreenRect) -> Option<windows::Win32::Foundation::HWND> {
+        // SAFETY: Reads the physical bounding rect of our own uniquely titled overlay HWND.
+        unsafe {
+            let hwnd = FindWindowW(None, w!("SnipToolOverlayViewport")).ok()?;
+            if hwnd.is_invalid() {
+                return None;
+            }
+            let mut wr = RECT::default();
+            if GetWindowRect(hwnd, &mut wr).is_ok() {
+                let w = wr.right - wr.left;
+                let h = wr.bottom - wr.top;
+                if w > 0 && h > 0 {
+                    self.window_phys_rect = ScreenRect {
+                        x: wr.left,
+                        y: wr.top,
+                        width: w,
+                        height: h,
+                    };
+                    return Some(hwnd);
+                }
+            }
+            self.window_phys_rect = expected;
+            Some(hwnd)
+        }
+    }
+
     fn ensure_win32_bounds_and_reveal(&mut self, ctx: &egui::Context) {
         let b = self.capture.bounds();
+        let hwnd = self.sync_window_phys_rect(b);
+
         if self.frames_rendered == 0 {
             // Keep the HWND cloaked during the very first paint so OpenGL uploads the frozen
             // desktop texture and swaps a real frame to DWM before the user ever sees it
             // (eliminates the brief white flash on Alt+O).
             set_overlay_cloaked(true);
-            if !self.positioned_win32 {
-                // SAFETY: Sizes our own uniquely titled overlay viewport while cloaked.
+            if let Some(hwnd) = hwnd {
+                // SAFETY: Sizes our own overlay viewport in exact physical virtual-screen pixels.
+                // `SWP_NOSENDCHANGING` bypasses `WM_GETMINMAXINFO` single-monitor clamping.
                 unsafe {
-                    if let Ok(hwnd) = FindWindowW(None, w!("SnipToolOverlayViewport"))
-                        && !hwnd.is_invalid()
-                    {
-                        let _ = SetWindowPos(
-                            hwnd,
-                            Some(HWND_TOPMOST),
-                            b.x,
-                            b.y,
-                            b.width,
-                            b.height,
-                            SWP_NOACTIVATE | SWP_NOREDRAW,
-                        );
-                        self.positioned_win32 = true;
-                    }
-                }
-            }
-            self.frames_rendered = 1;
-            ctx.request_repaint();
-            return;
-        }
-
-        if self.frames_rendered == 1 {
-            // Frame 0 has now been swapped to DWM; reveal and focus atomically with zero flash.
-            // SAFETY: Reveals and focuses our own uniquely titled overlay viewport window.
-            unsafe {
-                if let Ok(hwnd) = FindWindowW(None, w!("SnipToolOverlayViewport"))
-                    && !hwnd.is_invalid()
-                {
                     let _ = SetWindowPos(
                         hwnd,
                         Some(HWND_TOPMOST),
@@ -205,14 +207,62 @@ impl SnipOverlaySession {
                         b.y,
                         b.width,
                         b.height,
-                        SWP_SHOWWINDOW,
+                        SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOSENDCHANGING,
+                    );
+                }
+                let _ = self.sync_window_phys_rect(b);
+            }
+            self.frames_rendered = 1;
+            ctx.request_repaint();
+            return;
+        }
+
+        if self.frames_rendered == 1 {
+            // Frame 0 has now been swapped to DWM; enforce exact physical bounds (in case
+            // `WM_DPICHANGED` shifted the HWND across mixed-DPI monitors) and reveal atomically.
+            if let Some(hwnd) = hwnd {
+                // SAFETY: Reveals and focuses our own uniquely titled overlay viewport window.
+                unsafe {
+                    let _ = SetWindowPos(
+                        hwnd,
+                        Some(HWND_TOPMOST),
+                        b.x,
+                        b.y,
+                        b.width,
+                        b.height,
+                        SWP_SHOWWINDOW | SWP_NOSENDCHANGING,
                     );
                     set_overlay_cloaked(false);
                     let _ = SetForegroundWindow(hwnd);
-                    self.positioned_win32 = true;
                 }
+                let _ = self.sync_window_phys_rect(b);
             }
             self.frames_rendered = 2;
+            ctx.request_repaint();
+            return;
+        }
+
+        // Guard against asynchronous `WM_DPICHANGED` or winit resizes shifting the overlay off
+        // negative-origin secondary monitors on mixed-DPI setups.
+        if self.window_phys_rect != b
+            && self.reposition_attempts < 6
+            && let Some(hwnd) = hwnd
+        {
+            self.reposition_attempts += 1;
+            // SAFETY: Restores exact physical multi-monitor bounds on our own overlay HWND.
+            unsafe {
+                let _ = SetWindowPos(
+                    hwnd,
+                    Some(HWND_TOPMOST),
+                    b.x,
+                    b.y,
+                    b.width,
+                    b.height,
+                    SWP_NOACTIVATE | SWP_NOSENDCHANGING,
+                );
+            }
+            let _ = self.sync_window_phys_rect(b);
+            ctx.request_repaint();
         }
     }
 
@@ -226,7 +276,11 @@ impl SnipOverlaySession {
         }
 
         let mut triggered_cmd: Option<SnipCommand> = None;
-        let bounds = self.capture.bounds();
+        let capture_bounds = self.capture.bounds();
+        // Always map canvas pixels and texture UVs against the HWND's ACTUAL physical rect so
+        // Monitor 2 can never bleed onto Monitor 1 even during mixed-DPI transitions.
+        let bounds = self.window_phys_rect;
+        let uv_rect = compute_overlay_uv(bounds, capture_bounds);
 
         egui::CentralPanel::default()
             .frame(Frame::NONE)
@@ -235,12 +289,7 @@ impl SnipOverlaySession {
                 let response = ui.allocate_rect(canvas, Sense::click_and_drag());
                 let painter = ui.painter_at(canvas);
 
-                painter.image(
-                    self.texture.id(),
-                    canvas,
-                    Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
-                    Color32::WHITE,
-                );
+                painter.image(self.texture.id(), canvas, uv_rect, Color32::WHITE);
 
                 let hover_pos = ctx.input(|i| i.pointer.hover_pos());
                 let pointer_pos = ctx.input(|i| i.pointer.interact_pos()).or(hover_pos);
@@ -820,6 +869,21 @@ fn set_overlay_cloaked(cloaked: bool) {
     }
 }
 
+/// Computes the normalized texture UV rectangle for the sub-region of `capture_bounds`
+/// physically covered by `window_rect`, guaranteeing 1:1 pixel alignment on mixed-DPI monitors.
+fn compute_overlay_uv(window_rect: ScreenRect, capture_bounds: ScreenRect) -> Rect {
+    if capture_bounds.width <= 0 || capture_bounds.height <= 0 {
+        return Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
+    }
+    let w = capture_bounds.width as f32;
+    let h = capture_bounds.height as f32;
+    let u0 = ((window_rect.x - capture_bounds.x) as f32 / w).clamp(0.0, 1.0);
+    let v0 = ((window_rect.y - capture_bounds.y) as f32 / h).clamp(0.0, 1.0);
+    let u1 = ((window_rect.right() - capture_bounds.x) as f32 / w).clamp(0.0, 1.0);
+    let v1 = ((window_rect.bottom() - capture_bounds.y) as f32 / h).clamp(0.0, 1.0);
+    Rect::from_min_max(Pos2::new(u0, v0), Pos2::new(u1, v1))
+}
+
 /// Cloaks and pre-sizes the overlay HWND before making it visible so DWM never flashes an
 /// unrendered white background while OpenGL uploads the frozen screenshot texture.
 pub fn prepare_overlay_window_cloaked(bounds: ScreenRect) {
@@ -836,7 +900,7 @@ pub fn prepare_overlay_window_cloaked(bounds: ScreenRect) {
                 bounds.y,
                 bounds.width,
                 bounds.height,
-                SWP_NOACTIVATE | SWP_NOREDRAW,
+                SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOSENDCHANGING,
             );
         }
     }
@@ -862,19 +926,20 @@ mod tests {
 
     #[test]
     fn hidden_and_active_overlay_builders_never_trigger_window_recreation() {
-        let bounds = ScreenRect {
-            x: -1080,
-            y: 0,
-            width: 3960,
-            height: 1920,
-        };
         let mut hidden = SnipOverlaySession::hidden_viewport_builder();
-        let active = SnipOverlaySession::active_viewport_builder_for_bounds(bounds, 1.25);
+        let active = SnipOverlaySession::active_viewport_builder();
 
-        let (_cmds, recreate_to_active) = hidden.patch(active.clone());
+        let (cmds, recreate_to_active) = hidden.patch(active.clone());
         assert!(
             !recreate_to_active,
             "switching overlay viewport from hidden to active must never recreate the native window"
+        );
+        assert!(
+            !cmds.iter().any(|c| matches!(
+                c,
+                ViewportCommand::OuterPosition(_) | ViewportCommand::InnerSize(_)
+            )),
+            "active overlay builder must not emit DPI-skewed winit OuterPosition/InnerSize commands"
         );
 
         let mut active_builder = active;
@@ -884,5 +949,32 @@ mod tests {
             !recreate_to_hidden,
             "switching overlay viewport from active to hidden must never recreate the native window"
         );
+    }
+
+    #[test]
+    fn overlay_uv_maps_exact_physical_subregion_on_mixed_dpi_dual_monitors() {
+        let virtual_desktop = ScreenRect {
+            x: -1080,
+            y: 0,
+            width: 3960,
+            height: 1920,
+        };
+        // Full virtual desktop match -> exact 0..1 UVs
+        let full = compute_overlay_uv(virtual_desktop, virtual_desktop);
+        assert_eq!(full, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)));
+
+        // If OS temporarily clamped window to primary monitor (0, 0, 2880, 1800),
+        // UV must start at 1080/3960 so Monitor 2 never bleeds onto Monitor 1.
+        let primary_only = ScreenRect {
+            x: 0,
+            y: 0,
+            width: 2880,
+            height: 1800,
+        };
+        let sub = compute_overlay_uv(primary_only, virtual_desktop);
+        assert!((sub.min.x - (1080.0 / 3960.0)).abs() < 1e-5);
+        assert!((sub.max.x - 1.0).abs() < 1e-5);
+        assert!((sub.min.y - 0.0).abs() < 1e-5);
+        assert!((sub.max.y - (1800.0 / 1920.0)).abs() < 1e-5);
     }
 }

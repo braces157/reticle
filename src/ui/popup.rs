@@ -3,9 +3,7 @@ use crate::clipboard;
 use crate::config::{self, AppConfig};
 use crate::pin::PinManager;
 use crate::prefetch::{ActionAttach, OcrAttach, PrefetchManager};
-use crate::providers::{
-    build_http_client, select_provider, SnipAction, SnipError, SnipOutput,
-};
+use crate::providers::{build_http_client, SnipAction, SnipError, SnipOutput};
 use crate::snip::save;
 use crate::snip::{
     execute_snip_command, hide_overlay_viewport, overlay_viewport_id,
@@ -37,7 +35,6 @@ pub(crate) enum PopupContent {
     Hidden,
     Loading {
         action: SnipAction,
-        provider_hint: String,
     },
     Result {
         output: SnipOutput,
@@ -295,24 +292,13 @@ impl SnipPopupApp {
         match capture_virtual_screen() {
             Ok(capture) => {
                 let b = capture.bounds();
-                let ppp = ctx.pixels_per_point().max(1.0);
-                // Cloak + pre-size overlay HWND before showing so Windows never flashes an
-                // unrendered white background while OpenGL uploads the frozen screenshot texture.
+                // Cloak + pre-size overlay HWND in exact physical pixels before showing so Windows
+                // never flashes white and mixed-DPI winit logical commands never shift Monitor 2
+                // onto Monitor 1.
                 prepare_overlay_window_cloaked(b);
                 let session = SnipOverlaySession::new(ctx, capture, mode);
                 self.snip_overlay = Some(session);
                 let vp = overlay_viewport_id();
-                ctx.send_viewport_cmd_to(
-                    vp,
-                    ViewportCommand::OuterPosition(Pos2::new(b.x as f32 / ppp, b.y as f32 / ppp)),
-                );
-                ctx.send_viewport_cmd_to(
-                    vp,
-                    ViewportCommand::InnerSize(Vec2::new(
-                        b.width as f32 / ppp,
-                        b.height as f32 / ppp,
-                    )),
-                );
                 ctx.send_viewport_cmd_to(vp, ViewportCommand::Visible(true));
                 ctx.request_repaint();
             }
@@ -457,7 +443,7 @@ impl SnipPopupApp {
                 .snip_overlay
                 .as_ref()
                 .expect("checked is_some")
-                .viewport_builder(ctx);
+                .viewport_builder();
             let outcome = ctx.show_viewport_immediate(overlay_viewport_id(), builder, |ui, _| {
                 self.snip_overlay.as_mut().and_then(|s| s.ui(ui))
             });
@@ -527,9 +513,6 @@ impl SnipPopupApp {
         self.active_action = action;
 
         let anchor = Some(crop.screen_rect);
-        let provider_hint = select_provider(&self.config, action, self.http.clone())
-            .name()
-            .to_string();
 
         match self.prefetch.dispatch_or_attach_action(
             crop,
@@ -592,10 +575,7 @@ impl SnipPopupApp {
                 }
             }
             ActionAttach::AttachedStreaming { .. } | ActionAttach::Miss => {
-                self.content = PopupContent::Loading {
-                    action,
-                    provider_hint,
-                };
+                self.content = PopupContent::Loading { action };
                 if reposition || !self.visible {
                     let pos = self.compute_popup_pos(ctx, anchor, POPUP_HEIGHT_LOADING);
                     self.show_popup_at(ctx, pos, Vec2::new(POPUP_WIDTH, POPUP_HEIGHT_LOADING));

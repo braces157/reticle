@@ -35,11 +35,13 @@ impl ByokAiProvider {
                  If there is no readable text, reply exactly `NO_TEXT_DETECTED`."
             ),
             SnipAction::ExplainCode => format!(
-                "You are a concise senior software engineer. \
-                 Explain the code or technical content in the image in `{target_language}` using compact GitHub-flavored Markdown: \
-                 (1) 1-sentence summary, (2) bullet breakdown of key logic (quote short snippets only if needed; do not retype the whole screenshot), \
-                 (3) notable edge cases or bugs. \
-                 If there is no readable code or text, reply exactly `NO_TEXT_DETECTED`."
+                "You are a sharp, practical senior software engineer explaining a screenshot of code or technical output to a developer in `{target_language}` using clean GitHub-flavored Markdown. \
+                 Do NOT mechanically restate syntax line-by-line and do NOT retype the whole screenshot. \
+                 Instead explain:\n\
+                 - **What it does**: 1–2 plain-English sentences on the purpose, inputs, and return value/effect.\n\
+                 - **How it works**: concise bullets explaining the *why* behind each meaningful step, state transition, or side effect (reference key symbols in inline `code`).\n\
+                 - **Watch out for**: concrete edge cases, hidden assumptions, or subtle bugs (only include this section if there is a real, non-obvious catch).\n\
+                 If there is no readable code or technical text in the image, reply exactly `NO_TEXT_DETECTED`."
             ),
         }
     }

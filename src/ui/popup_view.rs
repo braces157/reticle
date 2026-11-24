@@ -559,10 +559,7 @@ fn render_body(app: &mut SnipPopupApp, ui: &mut egui::Ui, ctx: &egui::Context) -
         .inner_margin(Margin::symmetric(16, 15))
         .show(ui, |ui| match &app.content {
             PopupContent::Hidden => {}
-            PopupContent::Loading {
-                action,
-                provider_hint,
-            } => {
+            PopupContent::Loading { action, .. } => {
                 let r = ui.horizontal(|ui| {
                     let verb = match action {
                         SnipAction::Translate => "Translating…",
@@ -573,13 +570,6 @@ fn render_body(app: &mut SnipPopupApp, ui: &mut egui::Ui, ctx: &egui::Context) -
                             .size(14.0)
                             .color(theme::TEXT_PRIMARY),
                     );
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.label(
-                            RichText::new(provider_hint.to_ascii_uppercase())
-                                .size(10.2)
-                                .color(theme::TEXT_MUTED),
-                        );
-                    });
                 });
                 measured = Some(r.response.rect.height());
             }
@@ -886,15 +876,13 @@ fn render_body(app: &mut SnipPopupApp, ui: &mut egui::Ui, ctx: &egui::Context) -
 
 fn render_footer(app: &mut SnipPopupApp, ui: &mut egui::Ui, ctx: &egui::Context) {
     let is_ocr_view = matches!(app.content, PopupContent::Ocr { .. });
-    let provider_label = match &app.content {
+    let is_streaming = matches!(
+        app.content,
         PopupContent::Result {
-            output,
             is_streaming: true,
-        } => format!("STREAMING · {}", output.provider_label.to_ascii_uppercase()),
-        PopupContent::Result { output, .. } => output.provider_label.to_ascii_uppercase(),
-        PopupContent::Ocr { .. } => "WINDOWS OCR".to_string(),
-        _ => String::new(),
-    };
+            ..
+        }
+    );
     let mut translate_ocr = false;
 
     Frame::new()
@@ -932,13 +920,15 @@ fn render_footer(app: &mut SnipPopupApp, ui: &mut egui::Ui, ctx: &egui::Context)
                     app.trigger_snip_overlay(ctx);
                 }
 
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.label(
-                        RichText::new(provider_label)
-                            .size(10.0)
-                            .color(theme::TEXT_MUTED),
-                    );
-                });
+                if is_streaming {
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        ui.label(
+                            RichText::new("STREAMING…")
+                                .size(10.0)
+                                .color(theme::TEXT_MUTED),
+                        );
+                    });
+                }
             });
         });
 
