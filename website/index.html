@@ -1,0 +1,1116 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Reticle — Native Rust Snipping Tool for Windows</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Newsreader:ital,opsz,wght@1,6..72,400;1,6..72,500&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+</head>
+<body class="font-sans bg-void text-[#F4F4F6] selection:bg-accent/90 selection:text-white">
+
+  <div class="film-grain" aria-hidden="true"></div>
+  <div id="scroll-laser" aria-hidden="true"></div>
+
+  <!-- =========================================================
+       FLOATING LIQUID-GLASS NAVIGATION BAR
+       ========================================================= -->
+  <header class="sticky top-0 z-40 bg-void/75 backdrop-blur-2xl border-b border-white/[0.06]">
+    <div class="max-w-[1260px] mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-4">
+      <a href="#top" class="flex items-center gap-2.5 group shrink-0">
+        <span class="w-7 h-7 rounded-lg bg-white/[0.08] border border-white/15 flex items-center justify-center shadow-inner">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-white transition-transform duration-500 ease-out group-hover:rotate-90">
+            <path d="M4 9V5a1 1 0 0 1 1-1h4" />
+            <path d="M15 4h4a1 1 0 0 1 1 1v4" />
+            <path d="M20 15v4a1 1 0 0 1-1 1h-4" />
+            <path d="M9 20H5a1 1 0 0 1-1-1v-4" />
+            <circle cx="12" cy="12" r="2.2" fill="#FF4F30" stroke="none" />
+          </svg>
+        </span>
+        <span class="font-semibold tracking-[-0.03em] text-[15px] text-white">Reticle</span>
+      </a>
+
+      <nav class="hidden lg:flex items-center gap-7 text-[13px] font-medium text-white/55">
+        <a href="#playground" class="hover:text-white transition-colors">Playground</a>
+        <a href="#split-lab" class="hover:text-white transition-colors">Workflow</a>
+        <a href="#capabilities" class="hover:text-white transition-colors">Tools</a>
+        <a href="#engine" class="hover:text-white transition-colors">Architecture</a>
+        <a href="#compare" class="hover:text-white transition-colors">Compare</a>
+        <a href="#pricing" class="hover:text-white transition-colors">Free &amp; BYOK</a>
+      </nav>
+
+      <div class="flex items-center gap-2 shrink-0">
+        <button id="nav-cmdk-btn" type="button" title="Open Command Palette (Ctrl+K)" class="btn-glass hidden md:inline-flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[11px] font-mono text-white/65 hover:text-white">
+          <span>Command</span>
+          <kbd class="px-1.5 py-0.5 rounded bg-white/10 text-[10px] text-white/90">Ctrl+K</kbd>
+        </button>
+
+        <button id="sfx-toggle" type="button" title="Toggle optical shutter sound" class="btn-glass hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-mono text-white/70 hover:text-white">
+          <i data-lucide="volume-2" class="w-3.5 h-3.5"></i>
+          <span id="sfx-label">SFX</span>
+        </button>
+
+        <button id="nav-download-btn" type="button" class="magnetic-btn btn-luminous inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-lg">
+          <span>Download .exe</span>
+        </button>
+
+        <button id="mobile-menu-btn" type="button" aria-label="Open navigation menu" class="lg:hidden p-2 rounded-lg bg-white/[0.05] border border-white/10 text-white">
+          <i data-lucide="menu" class="w-4 h-4"></i>
+        </button>
+      </div>
+    </div>
+
+    <div id="mobile-menu" class="hidden lg:hidden border-t border-white/10 bg-void/95 backdrop-blur-xl px-4 py-3 text-sm font-medium">
+      <div class="grid grid-cols-2 gap-2">
+        <a href="#playground" class="mobile-nav-link px-3 py-2 rounded-lg bg-white/[0.04] text-white/80 hover:text-white">Playground</a>
+        <a href="#split-lab" class="mobile-nav-link px-3 py-2 rounded-lg bg-white/[0.04] text-white/80 hover:text-white">Workflow</a>
+        <a href="#capabilities" class="mobile-nav-link px-3 py-2 rounded-lg bg-white/[0.04] text-white/80 hover:text-white">Tools</a>
+        <a href="#engine" class="mobile-nav-link px-3 py-2 rounded-lg bg-white/[0.04] text-white/80 hover:text-white">Architecture</a>
+        <a href="#compare" class="mobile-nav-link px-3 py-2 rounded-lg bg-white/[0.04] text-white/80 hover:text-white">Compare</a>
+        <a href="#pricing" class="mobile-nav-link px-3 py-2 rounded-lg bg-white/[0.04] text-white/80 hover:text-white">Free &amp; BYOK</a>
+      </div>
+    </div>
+  </header>
+
+  <!-- =========================================================
+       CINEMATIC HERO & INTERACTIVE SNIPPING STAGE
+       ========================================================= -->
+  <section id="top" class="relative hero-dome overflow-hidden border-b border-white/[0.06]">
+    <!-- Raw WebGL GLSL Optical Refraction & Calibration Micro-Grid -->
+    <canvas id="hero-optical-canvas" class="absolute inset-0 w-full h-full pointer-events-none z-0" aria-hidden="true"></canvas>
+
+    <div class="relative z-10 max-w-[1260px] mx-auto px-4 sm:px-6 pt-10 sm:pt-14 pb-20 sm:pb-24">
+
+      <div class="relative pt-4 pb-10 sm:pb-14 mb-6">
+        <span class="hidden sm:block absolute top-0 left-0 w-3 h-3 border-t border-l border-white/20 pointer-events-none"></span>
+        <span class="hidden sm:block absolute top-0 right-0 w-3 h-3 border-t border-r border-white/20 pointer-events-none"></span>
+
+        <!-- Leica / Teenage Engineering Viewfinder Telemetry Bar -->
+        <div class="hidden sm:flex items-center justify-between font-mono text-[10px] tracking-wider uppercase text-white/35 mb-6 px-3">
+          <span class="inline-flex items-center gap-2">
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald"></span>
+            <span>WIN 10/11 · PURE RUST · 11.4 MB</span>
+          </span>
+          <span id="hero-telemetry-coords" class="tabular text-white/45">X 0000 · Y 0000</span>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-10 items-end">
+          <div class="lg:col-span-8">
+            <h1 class="hero-blur-in text-[2.75rem] sm:text-[4.25rem] lg:text-[5.25rem] font-light tracking-[-0.045em] leading-[1.04] text-white/90">
+              <span class="block text-white/60 font-light">Snip, pin &amp; decode</span>
+              <span class="mt-2 inline-block">
+                <span id="hero-ocr-word" class="ocr-hero-marquee font-sans font-medium tracking-[-0.045em]" title="Hover to scan · Click to copy">
+                  <span class="marquee-handle tl"></span>
+                  <span class="marquee-handle tr"></span>
+                  <span class="marquee-handle bl"></span>
+                  <span class="marquee-handle br"></span>
+                  <span class="ocr-word-raw">anything.</span>
+                  <span class="ocr-word-decoded" aria-hidden="true">anything.</span>
+                  <span class="hero-word-beam" aria-hidden="true"></span>
+                  <span id="hero-word-tag" class="absolute -bottom-7 right-0 inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md glass-panel font-mono text-[10px] font-medium tracking-normal text-white/85 whitespace-nowrap">
+                    <span class="text-white/45">Ctrl+C</span>
+                    <span id="hero-word-status" class="text-white">Copy · Pin · Annotate</span>
+                  </span>
+                </span>
+              </span>
+            </h1>
+          </div>
+
+          <div class="lg:col-span-4 space-y-5 lg:pb-2 hero-blur-in">
+            <p class="text-[15px] sm:text-[16px] leading-[1.65] text-white/55 font-normal">
+              A Pure Rust <span class="text-white font-medium">Windows 10/11</span> snipping instrument. Freeze any monitor, draw arrows or mosaic redactions, pin floating references on top, or run offline OCR, Translate &amp; AI Explain from one toolbar.
+            </p>
+            <div class="flex flex-wrap items-center gap-2.5">
+              <button id="hero-download-btn" type="button" class="magnetic-btn btn-luminous inline-flex items-center gap-2 px-5 py-2.5 text-[13.5px] font-semibold rounded-xl">
+                <i data-lucide="download" class="w-4 h-4"></i>
+                <span>Download for Windows</span>
+              </button>
+              <button id="hero-live-snip-btn" type="button" class="magnetic-btn btn-glass inline-flex items-center gap-2 px-3.5 py-2 text-[12px] font-medium rounded-xl">
+                <span class="w-1.5 h-1.5 rounded-full bg-accent"></span>
+                <span>Snip This Page</span>
+                <span class="keycap">S</span>
+              </button>
+            </div>
+            <div class="flex flex-wrap items-center gap-3 font-mono text-[11px] text-white/40">
+              <button id="hero-shortcut-btn" type="button" class="hover:text-white transition-colors inline-flex items-center gap-1.5">
+                <span>Hotkey</span>
+                <span class="text-white/75">Ctrl+Shift+O</span>
+              </button>
+              <span>·</span>
+              <span>Press <kbd class="text-white/75">Ctrl+K</kbd> for commands</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 3D PERSPECTIVE INTERACTIVE DESKTOP DISPLAY -->
+      <div id="playground" class="scroll-mt-20 hero-3d-wrap">
+        <div id="hero-display-3d" class="titanium-frame shadow-[0_50px_120px_-24px_rgba(0,0,0,0.95)]">
+          <div class="rounded-[17px] overflow-hidden bg-[#0A0B10] border border-white/[0.06]">
+
+            <div class="px-4 py-2.5 bg-[#0D0E14]/95 border-b border-white/[0.08] flex items-center justify-between gap-3">
+              <div class="flex items-center gap-2.5 shrink-0 text-[12px] font-medium text-white/85">
+                <span class="px-1.5 py-0.5 rounded bg-white/10 font-mono text-[10px] text-white/80">Win 11</span>
+                <span class="font-semibold">Reticle</span>
+                <span class="hidden sm:inline font-mono text-[10px] text-white/40">Ctrl+Shift+O</span>
+              </div>
+
+              <div id="preset-seg-track" class="seg-track inline-flex items-center p-0.5 rounded-lg bg-white/[0.04] border border-white/[0.08]">
+                <button type="button" data-target="code" class="preset-snip-btn px-2.5 py-1 rounded-md text-[11px] font-semibold bg-white text-black transition-colors">
+                  Annotate &amp; Copy
+                </button>
+                <button type="button" data-target="invoice" class="preset-snip-btn px-2.5 py-1 rounded-md text-[11px] font-medium text-white/55 hover:text-white transition-colors">
+                  Pin Reference
+                </button>
+                <button type="button" data-target="math" class="preset-snip-btn px-2.5 py-1 rounded-md text-[11px] font-medium text-white/55 hover:text-white transition-colors">
+                  Explain Code
+                </button>
+                <button type="button" data-target="tokyo" class="preset-snip-btn px-2.5 py-1 rounded-md text-[11px] font-medium text-white/55 hover:text-white transition-colors">
+                  OCR &amp; Translate
+                </button>
+              </div>
+
+              <div class="hidden md:flex items-center gap-3 text-[12px] font-medium text-white/70 tabular shrink-0">
+                <i data-lucide="crop" class="w-3.5 h-3.5 text-accent" title="Reticle System Tray"></i>
+                <i data-lucide="wifi" class="w-3.5 h-3.5 text-white/55"></i>
+                <i data-lucide="battery-full" class="w-4 h-4 text-white/55"></i>
+                <span id="live-clock" class="text-white/85 tracking-tight">00:00</span>
+              </div>
+            </div>
+
+            <!-- Interactive Simulated Desktop Stage -->
+            <div id="snip-stage" class="snip-stage desktop-wallpaper relative overflow-hidden">
+              <div id="guide-h" class="guide-h"></div>
+              <div id="guide-v" class="guide-v"></div>
+
+              <div id="cursor-loupe" class="hidden sm:inline-flex items-center gap-1.5 pointer-events-none absolute z-40 px-2 py-0.5 rounded-md bg-[#090A0F]/88 border border-white/15 backdrop-blur-md font-mono text-[10px] text-white/85 whitespace-nowrap tabular shadow-lg transition-opacity duration-150 opacity-0" style="transform: translate3d(0,0,0);">
+                <span id="loupe-coords" class="text-white/90">000, 000</span>
+                <span class="text-white/25">·</span>
+                <span id="loupe-hint" class="text-white/55">Drag to snip</span>
+              </div>
+
+              <div class="relative z-10 p-4 sm:p-6 lg:p-7 grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-5">
+                <!-- WINDOW 1: Paused Video Tutorial -->
+                <div id="target-code" data-target-id="code" data-hint="ANNOTATE &amp; COPY" class="capture-target relative rounded-xl bg-[#0D1017]/95 border border-white/[0.11] overflow-hidden shadow-2xl">
+                  <div class="px-3.5 py-2 bg-white/[0.03] border-b border-white/[0.07] flex items-center justify-between text-[11px] text-white/55">
+                    <span class="flex items-center gap-2 font-medium text-white/80">
+                      <span class="w-1.5 h-1.5 rounded-full bg-accent"></span>
+                      Paused Video · 4K Stream
+                    </span>
+                    <span class="font-mono text-[10px] text-white/40 tabular">04:18 / 12:40</span>
+                  </div>
+                  <div class="p-4 font-mono text-[12px] sm:text-[13px] leading-relaxed text-[#E2E8F0]">
+                    <div class="text-white/35 text-[10px] mb-1.5"># Drag handles to resize · click ↗ or Blur to draw live</div>
+                    <div><span class="text-[#FF7B72]">def</span> <span class="text-[#D2A8FF]">extract_blocks</span>(frame: np.ndarray) -&gt; list[str]:</div>
+                    <div class="pl-4">tensor = preprocess(frame, scale=<span class="text-[#79C0FF]">2.0</span>)</div>
+                    <div class="pl-4">tokens = engine.infer(tensor, quantized=<span class="text-[#79C0FF]">True</span>)</div>
+                    <div class="pl-4"><span class="text-[#FF7B72]">return</span> [t.text <span class="text-[#FF7B72]">for</span> t <span class="text-[#FF7B72]">in</span> tokens <span class="text-[#FF7B72]">if</span> t.conf &gt; <span class="text-[#79C0FF]">0.94</span>]</div>
+                    <div class="mt-4 pt-2.5 border-t border-white/[0.08] flex items-center gap-2.5 text-[10px] text-white/45">
+                      <span class="px-1.5 py-0.5 bg-white/10 rounded text-white">⏸</span>
+                      <div class="flex-1 h-1 bg-white/10 rounded-full overflow-hidden">
+                        <div class="w-1/3 h-full bg-white/80"></div>
+                      </div>
+                      <span class="font-mono text-[9px]">4K</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- WINDOW 2: Protected Scanned PDF Ledger -->
+                <div id="target-invoice" data-target-id="invoice" data-hint="PIN REFERENCE" class="capture-target relative rounded-xl bg-[#F5F4EF] border border-white/20 text-[#111115] overflow-hidden shadow-2xl paper-scan-effect">
+                  <div class="px-3.5 py-2 bg-[#E8E6DE] border-b border-black/10 flex items-center justify-between text-[11px] text-black/60">
+                    <span class="flex items-center gap-1.5 font-semibold text-black/80">
+                      <i data-lucide="lock" class="w-3 h-3 text-accent"></i>
+                      Q3_Ledger_Scan.pdf
+                    </span>
+                    <span class="font-mono text-[9px] px-1.5 py-0.5 rounded bg-black/10 text-black/70">PROTECTED</span>
+                  </div>
+                  <div class="p-4">
+                    <div class="flex items-baseline justify-between mb-2.5">
+                      <span class="font-semibold text-xs tracking-tight">Optical Hardware Procurement</span>
+                      <span class="font-mono text-[10px] text-black/45">INV-8841</span>
+                    </div>
+                    <table class="w-full font-mono text-[11px] sm:text-xs border-collapse tabular">
+                      <thead>
+                        <tr class="border-b border-black/20 text-left text-black/50">
+                          <th class="py-1 font-medium">Item</th>
+                          <th class="py-1 text-right font-medium">Qty</th>
+                          <th class="py-1 text-right font-medium">Unit</th>
+                          <th class="py-1 text-right font-medium">Total</th>
+                        </tr>
+                      </thead>
+                      <tbody class="divide-y divide-black/10">
+                        <tr>
+                          <td class="py-1.5">Aspheric Glass Prism</td>
+                          <td class="py-1.5 text-right">12</td>
+                          <td class="py-1.5 text-right">$145.00</td>
+                          <td class="py-1.5 text-right font-semibold">$1,740.00</td>
+                        </tr>
+                        <tr>
+                          <td class="py-1.5">Anodized Focus Ring</td>
+                          <td class="py-1.5 text-right">08</td>
+                          <td class="py-1.5 text-right">$89.50</td>
+                          <td class="py-1.5 text-right font-semibold">$716.00</td>
+                        </tr>
+                        <tr class="font-bold border-t border-black/30">
+                          <td class="pt-1.5">Net Due (USD)</td>
+                          <td></td>
+                          <td></td>
+                          <td class="pt-1.5 text-right text-accent">$2,456.00</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <!-- WINDOW 3: Rust Code Snippet for AI Explain -->
+                <div id="target-math" data-target-id="math" data-hint="EXPLAIN CODE (BYOK)" class="capture-target relative rounded-xl bg-[#0F1715]/95 border border-white/[0.11] text-[#EAF3EF] overflow-hidden shadow-2xl">
+                  <div class="px-3.5 py-2 bg-white/[0.03] border-b border-white/[0.07] flex items-center justify-between text-[11px] text-white/55">
+                    <span class="font-medium text-white/80">VS Code · raster.rs</span>
+                    <span class="font-mono text-[10px] text-emerald">BYOK EXPLAIN</span>
+                  </div>
+                  <div class="p-4 font-mono text-[11.5px] sm:text-[12.5px] leading-relaxed text-[#E2E8F0] min-h-[138px]">
+                    <div class="text-white/35 text-[10px] mb-1.5">// Snip + press E to explain with Gemini / OpenAI</div>
+                    <div><span class="text-[#FF7B72]">pub fn</span> <span class="text-[#D2A8FF]">apply_mosaic</span>(img: &amp;<span class="text-[#FF7B72]">mut</span> CroppedImage, block: i32) {</div>
+                    <div class="pl-4"><span class="text-[#FF7B72]">let</span> avg = sample_block_mean(&amp;img.rgba, block);</div>
+                    <div class="pl-4">fill_tile_rgba(&amp;<span class="text-[#FF7B72]">mut</span> img.rgba, avg);</div>
+                    <div>}</div>
+                  </div>
+                </div>
+
+                <!-- WINDOW 4: Tokyo Sign Photo -->
+                <div id="target-tokyo" data-target-id="tokyo" data-hint="OCR + TRANSLATE" class="capture-target relative rounded-xl bg-[#161112]/95 border border-white/[0.11] text-white overflow-hidden shadow-2xl">
+                  <div class="px-3.5 py-2 bg-white/[0.03] border-b border-white/[0.07] flex items-center justify-between text-[11px] text-white/55">
+                    <span class="font-medium text-white/80">Dark UI · Shibuya_Sign.png</span>
+                    <span class="font-mono text-[10px] text-accent">OCR · JP → EN</span>
+                  </div>
+                  <div class="p-4 sm:p-5 flex items-center justify-between gap-4 min-h-[138px]">
+                    <div>
+                      <div class="text-2xl sm:text-[26px] font-semibold tracking-wider leading-snug text-white">
+                        光学文字認識<br />
+                        <span class="text-white/75 text-base font-normal">営業時間 08:00 — 22:00</span>
+                      </div>
+                      <div class="mt-2 font-mono text-[11px] text-white/45">東京都渋谷区神南 1-14-7</div>
+                    </div>
+                    <div class="hidden sm:flex flex-col items-center justify-center w-12 h-24 border border-white/15 rounded-lg bg-white/[0.04] font-mono text-white/75 text-xs leading-tight py-2">
+                      <span>暗</span><span>所</span><span>O</span><span>C</span><span>R</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Draggable & Zoomable Pinned Floating Mini Snip -->
+              <div id="pinned-stage-card" class="hidden absolute top-4 left-4 z-40 w-64 rounded-xl glass-panel p-3.5 font-mono text-[11px] text-white cursor-grab active:cursor-grabbing origin-top-left">
+                <div class="flex items-center justify-between mb-1.5 text-[10px] text-accent">
+                  <span class="flex items-center gap-1.5 font-medium"><i data-lucide="pin" class="w-3 h-3"></i> Pinned · <span id="pinned-stage-zoom" class="text-white/70">100%</span></span>
+                  <button id="close-pinned-stage" type="button" aria-label="Close pinned card" class="text-white/55 hover:text-white px-1">✕</button>
+                </div>
+                <div id="pinned-stage-text" class="text-white/85 line-clamp-3 whitespace-pre-wrap text-[10px] leading-relaxed"></div>
+                <div class="mt-2 pt-1.5 border-t border-white/10 text-[9.5px] text-white/45">Drag to move · Scroll to zoom</div>
+              </div>
+
+              <!-- Active Spotlight Selection Box with 8 Resize Handles + Live Canvas -->
+              <div id="selection-box" class="reticle-box hidden absolute z-30 bg-transparent pointer-events-none">
+                <span class="sel-handle" data-handle="nw"></span>
+                <span class="sel-handle" data-handle="n"></span>
+                <span class="sel-handle" data-handle="ne"></span>
+                <span class="sel-handle" data-handle="e"></span>
+                <span class="sel-handle" data-handle="se"></span>
+                <span class="sel-handle" data-handle="s"></span>
+                <span class="sel-handle" data-handle="sw"></span>
+                <span class="sel-handle" data-handle="w"></span>
+
+                <div id="selection-dims" class="absolute -top-6 left-0 px-2 py-0.5 rounded-md bg-white text-black font-mono text-[10px] font-semibold whitespace-nowrap tabular shadow-lg">
+                  0 × 0 px
+                </div>
+
+                <!-- Live interactive annotation drawing canvas -->
+                <canvas id="stage-annot-canvas" class="absolute inset-0 w-full h-full pointer-events-none"></canvas>
+
+                <div id="selection-quickbar" class="hidden pointer-events-auto absolute -bottom-11 right-0 flex items-center gap-1 p-1 rounded-xl glass-panel text-[11px] whitespace-nowrap">
+                  <button id="quick-rect-btn" type="button" title="Draw Rectangle (1)" class="btn-glass px-2 py-1 rounded-lg font-mono text-[10.5px]">□</button>
+                  <button id="quick-arrow-btn" type="button" title="Draw Arrow (2)" class="btn-glass px-2 py-1 rounded-lg font-mono text-[10.5px]">↗</button>
+                  <button id="quick-mosaic-btn" type="button" title="Draw Mosaic Blur (5)" class="btn-glass px-2 py-1 rounded-lg font-mono text-[10.5px]">Blur</button>
+                  <button id="quick-undo-btn" type="button" title="Undo Annotation (Ctrl+Z)" class="btn-glass px-1.5 py-1 rounded-lg font-mono text-[10.5px] opacity-35" disabled>↶</button>
+                  <span class="w-px h-4 bg-white/15 mx-0.5"></span>
+                  <button id="quick-pin-btn" type="button" title="Pin floating screenshot (P)" class="btn-glass px-2 py-1 rounded-lg font-medium text-[11px]">Pin</button>
+                  <button id="quick-save-btn" type="button" title="Save PNG (Ctrl+S)" class="btn-glass px-2 py-1 rounded-lg font-medium text-[11px]">Save</button>
+                  <button id="quick-copy-btn" type="button" title="Copy to clipboard (Enter / Ctrl+C)" class="btn-luminous inline-flex items-center gap-1 px-2.5 py-1 rounded-lg font-semibold text-[11px]">Copy</button>
+                  <button id="quick-clear-btn" type="button" aria-label="Clear selection" class="w-6 h-6 inline-flex items-center justify-center rounded-lg text-white/45 hover:text-white hover:bg-white/10 transition-colors">✕</button>
+                </div>
+              </div>
+
+              <!-- Liquid-Glass Extraction Output Dock -->
+              <div id="ocr-hud" class="relative z-30 mx-4 sm:mx-6 mb-5 mt-3 rounded-xl glass-panel text-white overflow-hidden cursor-default">
+                <div class="px-4 py-2.5 bg-white/[0.02] border-b border-white/[0.08] flex flex-wrap items-center justify-between gap-2">
+                  <div class="flex items-center gap-2.5">
+                    <span class="w-6 h-6 rounded-md bg-white/[0.07] border border-white/10 inline-flex items-center justify-center text-white/80">
+                      <i data-lucide="clipboard-check" class="w-3.5 h-3.5"></i>
+                    </span>
+                    <div class="flex items-baseline gap-2">
+                      <span id="hud-mode" class="text-[13px] font-medium text-white tracking-[-0.01em]">Ready to Copy / Annotate</span>
+                      <span id="hud-meta" class="hidden sm:inline text-[12px] text-white/40">Drag handles to resize</span>
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <div id="hud-format-tabs" class="inline-flex bg-white/[0.04] p-0.5 rounded-lg border border-white/[0.08] text-[11px] font-medium"></div>
+                    <button id="hud-copy-btn" type="button" class="btn-luminous inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-[12px] font-semibold">
+                      <i data-lucide="copy" class="w-3 h-3"></i>
+                      <span id="hud-copy-label">Copy</span>
+                    </button>
+                  </div>
+                </div>
+                <pre id="hud-output" class="p-4 font-mono text-xs sm:text-[13px] leading-relaxed text-[#E4E4EA] overflow-x-auto thin-scroll max-h-44 whitespace-pre"></pre>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- =========================================================
+       SECTION 2: SPRING-ELASTIC BEFORE / AFTER COMPARE CURTAIN
+       ========================================================= -->
+  <section id="split-lab" class="scroll-mt-16 border-b border-white/[0.06] bg-void">
+    <div class="max-w-[1260px] mx-auto px-4 sm:px-6 py-20 sm:py-28">
+      <div class="flex flex-col xl:flex-row xl:items-end justify-between gap-6 pb-8 mb-8 border-b border-white/[0.08] scroll-reveal">
+        <div class="space-y-2.5 min-w-0">
+          <h2 class="text-3xl sm:text-[2.75rem] font-medium tracking-[-0.04em] leading-[1.1] flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span class="unselectable-blur">Raw capture</span>
+            <span class="text-white/25 font-light text-2xl sm:text-3xl">→</span>
+            <span class="native-selection"><span id="split-dynamic-label">Annotated &amp; Redacted</span><span class="native-caret" aria-hidden="true"></span></span>
+          </h2>
+          <p class="text-[14px] text-white/45 max-w-md">
+            Drag the divider to compare a raw Windows capture against in-overlay redaction, dark-mode OCR, and instant translation.
+          </p>
+        </div>
+        <div class="seg-track inline-flex flex-nowrap shrink-0 self-start xl:self-end items-center gap-1 bg-white/[0.04] p-1 rounded-xl border border-white/[0.08] max-w-full overflow-x-auto thin-scroll">
+          <button type="button" data-split="table" class="split-mode-btn px-3 py-1.5 rounded-lg text-xs font-medium bg-white text-black transition-colors">
+            Snip → Mosaic &amp; Callout
+          </button>
+          <button type="button" data-split="code" class="split-mode-btn px-3 py-1.5 rounded-lg text-xs font-medium text-white/55 hover:text-white transition-colors">
+            Dark UI → Offline OCR
+          </button>
+          <button type="button" data-split="receipt" class="split-mode-btn px-3 py-1.5 rounded-lg text-xs font-medium text-white/55 hover:text-white transition-colors">
+            Foreign UI → Translate
+          </button>
+        </div>
+      </div>
+
+      <div id="split-container" class="scroll-reveal relative rounded-2xl border border-white/[0.1] overflow-hidden bg-surface select-none shadow-2xl min-h-[340px] sm:min-h-[380px]">
+        <div class="w-full h-full min-h-[340px] sm:min-h-[380px] bg-[#0B0C11] text-white p-6 sm:p-10 flex flex-col justify-between">
+          <div class="flex items-center justify-between font-mono text-[11px] mb-4">
+            <span class="px-2.5 py-1 rounded-md bg-emerald/10 text-emerald border border-emerald/25">Processed Output</span>
+            <button id="split-copy-btn" type="button" class="btn-glass inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs">
+              <i data-lucide="copy" class="w-3 h-3"></i>
+              <span>Copy</span>
+            </button>
+          </div>
+          <pre id="split-right-code" class="font-mono text-xs sm:text-sm leading-relaxed text-[#E4E4EA] overflow-x-auto my-auto mx-auto w-full max-w-2xl bg-white/[0.03] border border-white/[0.08] rounded-xl p-5 whitespace-pre"></pre>
+          <div class="mt-4 pt-3 border-t border-white/[0.07] flex items-center justify-between font-mono text-[11px] text-white/40">
+            <span id="split-right-meta">Mosaic Redacted + Callout</span>
+            <span>Drag slider or press ← / →</span>
+          </div>
+        </div>
+
+        <div id="split-left-pane" class="absolute inset-0 bg-[#ECEAE2] text-[#121216] p-6 sm:p-10 flex flex-col justify-between paper-scan-effect" style="clip-path: inset(0 50% 0 0);">
+          <div class="flex items-center justify-between font-mono text-[11px] mb-4">
+            <span class="px-2.5 py-1 rounded-md bg-black/10 text-black/75 border border-black/15">Raw Screen Capture</span>
+          </div>
+          <div id="split-left-visual" class="my-auto mx-auto w-full max-w-2xl flex justify-center"></div>
+          <div class="mt-4 pt-3 border-t border-black/10 flex items-center justify-between font-mono text-[11px] text-black/50">
+            <span id="split-left-meta">Raw Capture</span>
+            <span>Before Reticle</span>
+          </div>
+        </div>
+
+        <canvas id="split-sparkle-canvas" class="absolute inset-0 w-full h-full pointer-events-none z-20"></canvas>
+
+        <svg id="split-bend-svg" class="absolute inset-0 w-full h-full pointer-events-none z-20" preserveAspectRatio="none">
+          <defs>
+            <linearGradient id="beamGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="rgba(255,255,255,0.12)" />
+              <stop offset="25%" stop-color="rgba(255,255,255,0.95)" />
+              <stop offset="50%" stop-color="#FF7A63" />
+              <stop offset="75%" stop-color="rgba(255,255,255,0.95)" />
+              <stop offset="100%" stop-color="rgba(255,255,255,0.12)" />
+            </linearGradient>
+          </defs>
+          <path id="split-bend-glow" d="" fill="none" stroke="rgba(255,79,48,0.38)" stroke-width="8" stroke-linecap="round" style="filter: blur(5px);" />
+          <path id="split-bend-line" d="" fill="none" stroke="url(#beamGrad)" stroke-width="1.75" stroke-linecap="round" />
+        </svg>
+
+        <div id="split-handle" class="split-handle absolute top-0 bottom-0 z-30 w-10 -ml-5 flex items-center justify-center" style="left: 50%;" role="slider" aria-label="Before and after comparison slider" aria-valuemin="8" aria-valuemax="92" aria-valuenow="50" tabindex="0">
+          <div class="compare-pill-thumb w-7 h-11 rounded-full text-black flex items-center justify-center gap-0.5">
+            <i data-lucide="chevron-left" class="w-3 h-3 stroke-[2.5]"></i>
+            <i data-lucide="chevron-right" class="w-3 h-3 stroke-[2.5]"></i>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- =========================================================
+       SECTION 3: SPECULAR BENTO CAPABILITIES
+       ========================================================= -->
+  <section id="capabilities" class="scroll-mt-16 border-b border-white/[0.06] bg-surface/50">
+    <div class="max-w-[1260px] mx-auto px-4 sm:px-6 py-20 sm:py-28">
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-baseline pb-10 mb-10 border-b border-white/[0.08] scroll-reveal">
+        <div class="lg:col-span-5">
+          <h2 class="text-2xl sm:text-[2.15rem] font-medium tracking-[-0.035em] text-white">
+            One overlay. Every tool.
+          </h2>
+        </div>
+        <div class="lg:col-span-7">
+          <p class="text-[15px] sm:text-[16px] text-white/50 leading-relaxed max-w-xl">
+            No separate editor jump, no Electron bloat, no subscription account. Five focused Windows tools wired straight to your keyboard muscle memory.
+          </p>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-12 gap-4">
+        <!-- CARD 1: In-Overlay Annotations -->
+        <div class="spotlight-card scroll-reveal md:col-span-7 p-6 sm:p-8 rounded-2xl flex flex-col justify-between gap-6">
+          <div class="relative z-10">
+            <h3 class="text-xl font-semibold tracking-[-0.02em] text-white mb-2">In-Overlay Annotations &amp; Mosaic</h3>
+            <p class="text-sm text-white/55 max-w-lg leading-relaxed">
+              Draw rectangles (<kbd class="px-1 py-0.5 bg-white/10 rounded font-mono text-[10px]">1</kbd>), anti-aliased arrows (<kbd class="px-1 py-0.5 bg-white/10 rounded font-mono text-[10px]">2</kbd>), freehand pen, highlighter, irreversible mosaic redaction (<kbd class="px-1 py-0.5 bg-white/10 rounded font-mono text-[10px]">5</kbd>), and native Segoe UI text notes (<kbd class="px-1 py-0.5 bg-white/10 rounded font-mono text-[10px]">6</kbd>) — with full Undo/Redo.
+            </p>
+          </div>
+
+          <div class="relative z-10 space-y-3">
+            <div class="rounded-xl bg-surface2/80 border border-white/[0.07] divide-y divide-white/[0.06] overflow-hidden">
+              <button type="button" data-pipe="mosaic" role="switch" aria-checked="true" class="pipe-toggle mac-switch-row is-active text-left">
+                <span class="flex items-center gap-2.5 min-w-0">
+                  <i data-lucide="grid-3x3" class="w-3.5 h-3.5 text-white/45 shrink-0"></i>
+                  <span class="pipe-label text-[13px] font-medium text-white whitespace-nowrap">Mosaic Blur (5)</span>
+                  <span class="hidden sm:inline text-[12px] text-white/40 truncate">Irreversibly pixelates API keys &amp; emails</span>
+                </span>
+                <span class="mac-switch" aria-hidden="true"></span>
+              </button>
+              <button type="button" data-pipe="arrow" role="switch" aria-checked="true" class="pipe-toggle mac-switch-row is-active text-left">
+                <span class="flex items-center gap-2.5 min-w-0">
+                  <i data-lucide="arrow-up-right" class="w-3.5 h-3.5 text-white/45 shrink-0"></i>
+                  <span class="pipe-label text-[13px] font-medium text-white whitespace-nowrap">Arrow &amp; Rect (1–2)</span>
+                  <span class="hidden sm:inline text-[12px] text-white/40 truncate">Anti-aliased callouts baked into PNG</span>
+                </span>
+                <span class="mac-switch" aria-hidden="true"></span>
+              </button>
+              <button type="button" data-pipe="note" role="switch" aria-checked="false" class="pipe-toggle mac-switch-row text-left">
+                <span class="flex items-center gap-2.5 min-w-0">
+                  <i data-lucide="type" class="w-3.5 h-3.5 text-white/45 shrink-0"></i>
+                  <span class="pipe-label text-[13px] font-medium text-white/60 whitespace-nowrap">Inline Text Note (6)</span>
+                  <span class="hidden sm:inline text-[12px] text-white/40 truncate">Crisp Unicode Segoe UI rasterized on export</span>
+                </span>
+                <span class="mac-switch" aria-hidden="true"></span>
+              </button>
+            </div>
+            <div id="pipe-preview" class="p-4 rounded-xl bg-void/80 border border-white/[0.07] text-white/85 font-mono text-xs leading-relaxed whitespace-pre-wrap"></div>
+          </div>
+        </div>
+
+        <!-- CARD 2: Pin Floating Screenshots -->
+        <div class="spotlight-card scroll-reveal md:col-span-5 p-6 sm:p-8 rounded-2xl flex flex-col justify-between gap-6">
+          <div class="relative z-10">
+            <h3 class="text-xl font-semibold tracking-[-0.02em] text-white mb-2">Pin Floating Screenshots</h3>
+            <p class="text-sm text-white/55 leading-relaxed">
+              Press <kbd class="px-1.5 py-0.5 bg-white/10 rounded font-mono text-[11px] text-white">P</kbd> to pin any snip always-on-top. Scroll to zoom (25%–400%), <kbd class="px-1 py-0.5 bg-white/10 rounded font-mono text-[10px]">Shift+Scroll</kbd> for Win32 opacity, right-click for Copy/Save/OCR/Translate.
+            </p>
+          </div>
+
+          <div class="relative z-10 p-4 rounded-xl bg-void/70 border border-white/[0.07]">
+            <div class="cc-slider-wrap mb-4">
+              <div id="pin-slider-fill" class="cc-slider-fill" style="width: 90%;"></div>
+              <div class="cc-slider-label relative z-[2] h-full px-3 flex items-center justify-between pointer-events-none">
+                <span class="inline-flex items-center gap-1.5 text-[11px] font-medium">
+                  <i data-lucide="sun" class="w-3.5 h-3.5"></i>
+                  <span>Shift+Scroll Opacity</span>
+                </span>
+                <span id="pin-opacity-val" class="font-mono text-[11px] font-semibold tabular">92%</span>
+              </div>
+              <input id="pin-opacity-slider" type="range" min="20" max="100" value="92" aria-label="Pinned overlay opacity" class="cc-slider-input" />
+            </div>
+            <div id="pin-demo-card" class="p-3.5 rounded-lg bg-white/[0.06] border border-white/15 font-mono text-xs transition-opacity" style="opacity: 0.92;">
+              <div class="flex items-center justify-between text-[10px] text-accent mb-1.5">
+                <span>Pinned · Always on Top</span>
+                <span class="text-white/45">Double-click or Esc</span>
+              </div>
+              <div class="text-white/90">Ctrl+C Copy · Ctrl+S Save</div>
+              <div class="text-white/55">O OCR · T Translate · 0 Reset</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- CARD 3: Dark-Mode OCR & Translate -->
+        <div class="spotlight-card scroll-reveal md:col-span-5 p-6 sm:p-8 rounded-2xl flex flex-col justify-between gap-5">
+          <div class="relative z-10">
+            <h3 class="text-xl font-semibold tracking-[-0.02em] text-white mb-2">Dark-Mode OCR &amp; Translate</h3>
+            <p class="text-sm text-white/55 leading-relaxed">
+              Native <code class="text-white/80 font-mono text-xs">Windows.Media.Ocr</code> with Otsu contrast preprocessing for dark UIs &amp; CJK text — press <kbd class="px-1 py-0.5 bg-white/10 rounded font-mono text-[10px]">O</kbd> for offline text or <kbd class="px-1 py-0.5 bg-white/10 rounded font-mono text-[10px]">T</kbd> to translate.
+            </p>
+          </div>
+          <div class="relative z-10 space-y-2.5">
+            <div class="seg-track inline-flex flex-wrap items-center gap-0.5 p-0.5 rounded-xl bg-white/[0.04] border border-white/[0.08]">
+              <button type="button" data-lang="jp" class="lang-btn px-2.5 py-1 rounded-lg font-mono text-[11px] bg-white text-black font-semibold transition-colors">日本語</button>
+              <button type="button" data-lang="vi" class="lang-btn px-2.5 py-1 rounded-lg font-mono text-[11px] text-white/55 hover:text-white transition-colors">Tiếng Việt</button>
+              <button type="button" data-lang="kr" class="lang-btn px-2.5 py-1 rounded-lg font-mono text-[11px] text-white/55 hover:text-white transition-colors">한국어</button>
+              <button type="button" data-lang="de" class="lang-btn px-2.5 py-1 rounded-lg font-mono text-[11px] text-white/55 hover:text-white transition-colors">Deutsch</button>
+            </div>
+            <div id="lang-preview" class="p-3.5 rounded-xl bg-void/70 border border-white/[0.07]">
+              <div id="lang-src" class="text-sm font-medium text-white">光学認識エンジンは完全にオフラインで動作します。</div>
+              <div id="lang-tr" class="mt-1.5 font-mono text-[11px] text-white/55">→ "The optical recognition engine operates completely offline."</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- CARD 4: 5-Color Swatch Palette & Sizes -->
+        <div class="spotlight-card scroll-reveal md:col-span-4 p-6 sm:p-8 rounded-2xl flex flex-col justify-between gap-5">
+          <div class="relative z-10">
+            <h3 class="text-xl font-semibold tracking-[-0.02em] text-white mb-2">5-Color Ink &amp; Stroke Sizes</h3>
+            <p class="text-sm text-white/55 leading-relaxed">
+              Contextual style sub-bar appears only while drawing — pick from 5 high-contrast colors and <code class="text-white/80 font-mono text-xs">S / M / L</code> stroke, mosaic, and font weights.
+            </p>
+          </div>
+          <div class="relative z-10 space-y-2.5">
+            <div class="grid grid-cols-5 gap-2">
+              <button type="button" data-hex="#EF4444" data-name="Callout Red" aria-label="Callout Red" class="swatch-btn is-selected h-9 rounded-lg border border-white/15" style="background:#EF4444;"></button>
+              <button type="button" data-hex="#F59E0B" data-name="Marker Amber" aria-label="Marker Amber" class="swatch-btn h-9 rounded-lg border border-white/15 hover:scale-105" style="background:#F59E0B;"></button>
+              <button type="button" data-hex="#22C55E" data-name="Signal Emerald" aria-label="Signal Emerald" class="swatch-btn h-9 rounded-lg border border-white/15 hover:scale-105" style="background:#22C55E;"></button>
+              <button type="button" data-hex="#38BDF8" data-name="Reticle Sky" aria-label="Reticle Sky" class="swatch-btn h-9 rounded-lg border border-white/15 hover:scale-105" style="background:#38BDF8;"></button>
+              <button type="button" data-hex="#FAFAFA" data-name="Pure White" aria-label="Pure White" class="swatch-btn h-9 rounded-lg border border-white/15 hover:scale-105" style="background:#FAFAFA;"></button>
+            </div>
+            <div class="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-void/70 border border-white/[0.07]">
+              <svg id="swatch-stroke-svg" viewBox="0 0 140 28" class="h-6 flex-1 overflow-visible">
+                <path id="swatch-stroke-path" d="M 6 20 Q 52 6 122 14" fill="none" stroke="#EF4444" stroke-width="3.5" stroke-linecap="round" class="ink-stroke-anim" />
+                <polygon id="swatch-stroke-head" points="132,15 117,9 119,20" fill="#EF4444" />
+              </svg>
+              <div class="inline-flex items-center gap-0.5 p-0.5 rounded-md bg-white/[0.05] border border-white/10 font-mono text-[10px]">
+                <button type="button" data-width="2" class="stroke-size-btn px-1.5 py-0.5 rounded text-white/55 hover:text-white">S</button>
+                <button type="button" data-width="3.5" class="stroke-size-btn px-1.5 py-0.5 rounded bg-white text-black font-semibold">M</button>
+                <button type="button" data-width="6" class="stroke-size-btn px-1.5 py-0.5 rounded text-white/55 hover:text-white">L</button>
+              </div>
+            </div>
+            <div class="flex items-center justify-between px-3 py-2 rounded-lg bg-void/70 border border-white/[0.07] font-mono text-xs">
+              <span id="swatch-readout" class="text-white/90">#EF4444 · Callout Red</span>
+              <button id="swatch-copy-btn" type="button" class="btn-glass px-2.5 py-1 rounded-md text-[11px] font-medium text-white">Copy</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- CARD 5: Native Footprint -->
+        <div class="spotlight-card scroll-reveal md:col-span-3 p-6 sm:p-8 rounded-2xl flex flex-col justify-between gap-5">
+          <div class="relative z-10">
+            <h3 class="text-xl font-semibold tracking-[-0.02em] text-white mb-2">Pure Rust Binary</h3>
+            <p class="text-sm text-white/55 leading-relaxed">
+              Zero Electron, zero browser runtime. One stripped LTO binary that sits quietly in your Windows system tray.
+            </p>
+          </div>
+          <div class="relative z-10 space-y-2 font-mono text-xs tabular">
+            <div class="flex justify-between py-1.5 border-b border-white/[0.07]">
+              <span class="text-white/45">Release .exe</span>
+              <span class="text-white font-medium">11.4 MB</span>
+            </div>
+            <div class="flex justify-between py-1.5 border-b border-white/[0.07]">
+              <span class="text-white/45">Multi-Monitor</span>
+              <span class="text-white font-medium">Per-Mon DPI v2</span>
+            </div>
+            <div class="flex justify-between py-1.5">
+              <span class="text-white/45">Overlay</span>
+              <span class="text-emerald font-medium">Pre-warmed</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- =========================================================
+       SECTION 4: LOCAL-FIRST ARCHITECTURE & OSCILLOSCOPE
+       ========================================================= -->
+  <section id="engine" class="scroll-mt-16 bg-void border-b border-white/[0.06]">
+    <div class="max-w-[1260px] mx-auto px-4 sm:px-6 py-20 sm:py-28">
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-14 items-center">
+        <div class="lg:col-span-5 space-y-6 scroll-reveal">
+          <div class="flex items-baseline gap-4 pb-5 border-b border-white/[0.08]">
+            <h2 class="text-5xl sm:text-[4.25rem] font-light tracking-[-0.055em] leading-none text-white tabular">
+              0<span class="text-accent font-mono text-3xl sm:text-4xl ml-1">B</span>
+            </h2>
+            <span class="text-sm sm:text-[15px] text-white/55 leading-snug">
+              uploaded during snip, pin, annotate &amp; OCR.<br />Network only when you click Translate or Explain.
+            </span>
+          </div>
+          <p class="text-sm sm:text-base text-white/55 leading-relaxed">
+            Screen capture, 8-handle resizing, vector annotations, mosaic redaction, floating pins, and <span class="text-white font-medium">Windows.Media.Ocr</span> execute 100% locally in Pure Rust. When you click <span class="text-white font-medium">Translate (T)</span> or <span class="text-white font-medium">Explain (E)</span>, requests go straight from your PC to the provider — zero middleman server.
+          </p>
+
+          <div class="spotlight-card rounded-2xl overflow-hidden">
+            <div class="relative z-10 px-4 py-3 border-b border-white/[0.07] bg-white/[0.02] flex items-center justify-between gap-3">
+              <div class="flex items-center gap-2">
+                <i data-lucide="shield-check" class="w-4 h-4 text-white/75"></i>
+                <span class="text-[13px] font-medium text-white">Local Capture &amp; OCR Monitor</span>
+              </div>
+              <button id="run-audit-btn" type="button" class="btn-luminous inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-[11.5px] font-semibold">
+                <i data-lucide="play" class="w-3 h-3"></i>
+                <span>Simulate Local Snip</span>
+              </button>
+            </div>
+
+            <div class="relative z-10 px-4 pt-3 pb-2 border-b border-white/[0.06] bg-void/50">
+              <div class="flex items-center justify-between text-[11px] mb-1.5">
+                <span class="text-white/45">Outbound traffic · <span class="text-white/80 font-medium">0 KB/s</span></span>
+                <span id="audit-pulse-label" class="font-mono text-[10px] text-white/45 tabular">Idle · Local Only</span>
+              </div>
+              <canvas id="privacy-wave-canvas" class="w-full h-11 block"></canvas>
+            </div>
+
+            <div class="relative z-10 divide-y divide-white/[0.06] text-[12.5px]">
+              <div class="px-4 py-2.5 flex items-center justify-between gap-3">
+                <div class="flex items-center gap-2.5 min-w-0">
+                  <i data-lucide="cpu" class="w-3.5 h-3.5 text-white/45 shrink-0"></i>
+                  <span class="text-white/85 truncate">Win32 GDI + Windows.Media.Ocr</span>
+                </div>
+                <div class="flex items-center gap-3 font-mono text-[11px] tabular shrink-0">
+                  <span id="audit-ms" class="text-white">18.4 ms</span>
+                  <span class="text-white/40"><span id="audit-count">1</span> run</span>
+                </div>
+              </div>
+              <div class="px-4 py-2.5 flex items-center justify-between gap-3">
+                <div class="flex items-center gap-2.5 min-w-0">
+                  <i data-lucide="wifi-off" class="w-3.5 h-3.5 text-white/45 shrink-0"></i>
+                  <span class="text-white/85 truncate">Snip / Annotate / Pin / OCR Egress</span>
+                </div>
+                <span class="font-mono text-[11px] text-white/60 tabular shrink-0">0 bytes sent</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="lg:col-span-7 scroll-reveal">
+          <div id="arch-pipeline-stage" class="spotlight-card relative rounded-2xl overflow-hidden border border-white/[0.1] bg-[#090A0F] shadow-[0_40px_100px_-24px_rgba(0,0,0,0.95)] p-5 sm:p-6">
+            <!-- Header & Mode Switch -->
+            <div class="relative z-10 flex flex-wrap items-center justify-between gap-3 pb-4 mb-4 border-b border-white/[0.07]">
+              <div>
+                <div class="font-mono text-[10px] text-accent uppercase tracking-widest mb-0.5">Live Rust Dataflow</div>
+                <div class="text-sm font-medium text-white">Click any stage or press Simulate Local Snip</div>
+              </div>
+              <div class="inline-flex items-center p-0.5 rounded-lg bg-white/[0.04] border border-white/[0.08]">
+                <button type="button" data-arch-mode="local" class="px-2.5 py-1 rounded-md text-[11px] font-semibold bg-white text-black transition-colors whitespace-nowrap">
+                  Local (0 B)
+                </button>
+                <button type="button" data-arch-mode="byok" class="px-2.5 py-1 rounded-md text-[11px] font-medium text-white/55 hover:text-white transition-colors whitespace-nowrap">
+                  Translate / BYOK
+                </button>
+              </div>
+            </div>
+
+            <!-- Schematic Canvas: Local Air-Gapped Boundary + Optional Direct TLS -->
+            <div class="relative z-10 rounded-xl bg-void/70 border border-white/[0.07] p-4 sm:p-5 overflow-hidden">
+              <!-- Animated SVG Wires Layer -->
+              <svg id="arch-wires-svg" viewBox="0 0 600 250" preserveAspectRatio="none" class="hidden sm:block absolute inset-0 w-full h-full pointer-events-none z-0">
+                <defs>
+                  <filter id="archGlow" x="-50%" y="-50%" width="200%" height="200%">
+                    <feGaussianBlur stdDeviation="2.5" result="blur" />
+                    <feMerge>
+                      <feMergeNode in="blur" />
+                      <feMergeNode in="SourceGraphic" />
+                    </feMerge>
+                  </filter>
+                </defs>
+                <!-- Top row: Hotkey -> GDI -> Overlay -->
+                <path id="wire-hotkey-gdi" class="arch-wire" d="M 168 58 L 218 58" />
+                <path id="wire-gdi-overlay" class="arch-wire" d="M 382 58 L 432 58" />
+                <!-- Branch down from Overlay to Raster & OCR -->
+                <path id="wire-overlay-raster" class="arch-wire" d="M 480 96 C 480 128, 102 112, 102 152" />
+                <path id="wire-overlay-ocr" class="arch-wire" d="M 505 96 C 505 130, 300 116, 300 152" />
+                <!-- Optional Egress Gate: OCR -> Direct TLS -->
+                <path id="wire-ocr-egress" class="arch-wire is-sealed" d="M 382 188 L 432 188" />
+              </svg>
+
+              <!-- Local Process Zone Frame -->
+              <div class="relative z-10 space-y-5">
+                <div class="flex items-center justify-between">
+                  <span class="font-mono text-[10px] text-emerald/90 uppercase tracking-wider inline-flex items-center gap-1.5">
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald"></span>
+                    Local Windows Process · snip-translate.exe
+                  </span>
+                  <span id="arch-egress-badge" class="font-mono text-[10px] px-2 py-0.5 rounded bg-emerald/15 text-emerald border border-emerald/30">
+                    SEALED · 0 B EGRESS
+                  </span>
+                </div>
+
+                <!-- Row 1: Capture Pipeline -->
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <button type="button" data-arch-node="hotkey" class="arch-node">
+                    <div class="flex items-center justify-between font-mono text-[10px] text-white/45 mb-1">
+                      <span>01 · TRIGGER</span>
+                      <span class="text-white/65">&lt; 1ms</span>
+                    </div>
+                    <div class="text-xs font-semibold text-white">Ctrl + Shift + O</div>
+                    <div class="font-mono text-[10px] text-white/45 mt-0.5 truncate">hotkey.rs · tray</div>
+                  </button>
+
+                  <button type="button" data-arch-node="gdi" class="arch-node">
+                    <div class="flex items-center justify-between font-mono text-[10px] text-white/45 mb-1">
+                      <span>02 · CAPTURE</span>
+                      <span class="text-sky-400">~15ms</span>
+                    </div>
+                    <div class="text-xs font-semibold text-white">Win32 GDI BitBlt</div>
+                    <div class="font-mono text-[10px] text-white/45 mt-0.5 truncate">screen.rs · DPI v2</div>
+                  </button>
+
+                  <button type="button" data-arch-node="overlay" class="arch-node is-selected">
+                    <div class="flex items-center justify-between font-mono text-[10px] text-white/45 mb-1">
+                      <span>03 · OVERLAY</span>
+                      <span class="text-emerald">GPU</span>
+                    </div>
+                    <div class="text-xs font-semibold text-white">egui Glow Canvas</div>
+                    <div class="font-mono text-[10px] text-white/45 mt-0.5 truncate">overlay_ui.rs · 8 handles</div>
+                  </button>
+                </div>
+
+                <!-- Row 2: Local Outputs + Sealed Optional Egress -->
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
+                  <button type="button" data-arch-node="raster" class="arch-node">
+                    <div class="flex items-center justify-between font-mono text-[10px] text-emerald/85 mb-1">
+                      <span>LOCAL OUTPUT</span>
+                      <span>0 B</span>
+                    </div>
+                    <div class="text-xs font-semibold text-white">Copy · Save · Pin</div>
+                    <div class="font-mono text-[10px] text-white/45 mt-0.5 truncate">raster.rs · pin/mod.rs</div>
+                  </button>
+
+                  <button type="button" data-arch-node="ocr" class="arch-node">
+                    <div class="flex items-center justify-between font-mono text-[10px] text-emerald/85 mb-1">
+                      <span>OFFLINE OCR</span>
+                      <span>0 B</span>
+                    </div>
+                    <div class="text-xs font-semibold text-white">Windows.Media.Ocr</div>
+                    <div class="font-mono text-[10px] text-white/45 mt-0.5 truncate">ocr.rs · Otsu dark UI</div>
+                  </button>
+
+                  <button type="button" data-arch-node="egress" class="arch-node is-sealed">
+                    <div class="flex items-center justify-between font-mono text-[10px] text-accent/90 mb-1">
+                      <span>OPTIONAL (T / E)</span>
+                      <span>DIRECT</span>
+                    </div>
+                    <div class="text-xs font-semibold text-white">Gemini / OpenAI</div>
+                    <div class="font-mono text-[10px] text-white/45 mt-0.5 truncate">byok_ai.rs · rustls TLS</div>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Live Node Inspector Readout -->
+            <div class="relative z-10 mt-4 p-3.5 rounded-xl bg-white/[0.025] border border-white/[0.07] flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div class="min-w-0">
+                <div class="flex items-center gap-2 mb-0.5">
+                  <span id="arch-inspector-title" class="text-xs font-semibold text-white">Pre-warmed egui Glow Overlay</span>
+                  <span id="arch-inspector-file" class="font-mono text-[10px] px-1.5 py-0.5 rounded bg-white/[0.06] text-white/60">src/snip/overlay_ui.rs</span>
+                </div>
+                <p id="arch-inspector-detail" class="text-[11.5px] text-white/50 leading-relaxed">
+                  1:1 GPU texture backdrop, 8 resize handles, 6 vector/mosaic tools &amp; floating toolbar.
+                </p>
+              </div>
+              <span id="arch-inspector-timing" class="font-mono text-xs text-emerald shrink-0 tabular">~3 ms</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- =========================================================
+       SECTION 5: BENCHMARK COMPARISON
+       ========================================================= -->
+  <section id="compare" class="scroll-mt-16 border-b border-white/[0.06] bg-surface/40">
+    <div class="max-w-[1260px] mx-auto px-4 sm:px-6 py-20 sm:py-28">
+      <div class="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-12 scroll-reveal">
+        <div class="flex items-baseline gap-4">
+          <h2 class="text-5xl sm:text-[4rem] font-light tracking-[-0.055em] leading-none text-white tabular">
+            1<span class="font-mono text-2xl sm:text-3xl text-accent ml-1">hotkey</span>
+          </h2>
+          <span class="text-sm sm:text-[15px] text-white/55 leading-snug">
+            replaces Snipping Tool,<br />pins, annotator &amp; OCR.
+          </span>
+        </div>
+        <p class="text-sm text-white/55 max-w-md leading-relaxed">
+          Windows Snipping Tool forces a separate editor window, lacks floating pins, and misses small dark-mode CJK text.
+        </p>
+      </div>
+
+      <div class="spotlight-card scroll-reveal mb-8 p-6 sm:p-8 rounded-2xl">
+        <div class="relative z-10 flex flex-wrap items-center justify-between gap-2 mb-6">
+          <span class="text-xs font-medium text-white/85">Binary &amp; Runtime Footprint (lower is lighter)</span>
+          <span class="font-mono text-[11px] text-white/45">Measured release build · Windows x64</span>
+        </div>
+        <div class="relative z-10 space-y-4 font-mono text-xs tabular">
+          <div>
+            <div class="flex justify-between mb-1.5">
+              <span class="font-semibold text-white">Reticle (Pure Rust · Single .exe)</span>
+              <span class="font-semibold text-accent">11.4 MB</span>
+            </div>
+            <div class="h-2 rounded-full bg-white/[0.06] overflow-hidden">
+              <div class="bench-bar h-full bg-gradient-to-r from-accent to-white rounded-full" data-width="8%" style="width: 8%;"></div>
+            </div>
+          </div>
+          <div>
+            <div class="flex justify-between mb-1.5">
+              <span class="text-white/55">Typical .NET / WinUI Capture Suites</span>
+              <span class="text-white/45">~85 MB + runtime</span>
+            </div>
+            <div class="h-2 rounded-full bg-white/[0.06] overflow-hidden">
+              <div class="bench-bar h-full bg-white/30 rounded-full" data-width="46%" style="width: 46%;"></div>
+            </div>
+          </div>
+          <div>
+            <div class="flex justify-between mb-1.5">
+              <span class="text-white/55">Electron Screenshot &amp; AI Wrappers</span>
+              <span class="text-white/45">~180 MB+ (Chromium)</span>
+            </div>
+            <div class="h-2 rounded-full bg-white/[0.06] overflow-hidden">
+              <div class="bench-bar h-full bg-white/15 rounded-full" data-width="94%" style="width: 94%;"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="scroll-reveal overflow-x-auto rounded-2xl border border-white/[0.08] bg-surface">
+        <table class="w-full text-left border-collapse text-sm">
+          <thead>
+            <tr class="border-b border-white/[0.08] bg-white/[0.02] text-xs font-medium text-white/50">
+              <th class="py-4 px-5 text-white/80">Capability</th>
+              <th class="py-4 px-5 text-white font-semibold bg-white/[0.03]">Reticle (Rust)</th>
+              <th class="py-4 px-5">Win 11 Snipping Tool</th>
+              <th class="py-4 px-5">Basic Pin Tools</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-white/[0.06] text-[13px]">
+            <tr>
+              <td class="py-3.5 px-5 text-white/85">In-Overlay Annotations + Mosaic Blur</td>
+              <td class="py-3.5 px-5 font-mono text-xs text-emerald bg-white/[0.03]">✓ 6 Tools + Undo/Redo</td>
+              <td class="py-3.5 px-5 text-white/45">Opens separate window</td>
+              <td class="py-3.5 px-5 text-white/45">Varies</td>
+            </tr>
+            <tr>
+              <td class="py-3.5 px-5 text-white/85">Floating Always-on-Top Pins</td>
+              <td class="py-3.5 px-5 font-mono text-xs text-emerald bg-white/[0.03]">✓ Zoom + Win32 Opacity</td>
+              <td class="py-3.5 px-5 text-white/45">Not supported</td>
+              <td class="py-3.5 px-5 text-white/45">Supported</td>
+            </tr>
+            <tr>
+              <td class="py-3.5 px-5 text-white/85">Offline Dark-Mode OCR</td>
+              <td class="py-3.5 px-5 font-mono text-xs text-emerald bg-white/[0.03]">✓ Otsu + Windows.Media.Ocr</td>
+              <td class="py-3.5 px-5 text-white/45">Extra Text Actions click</td>
+              <td class="py-3.5 px-5 text-white/45">Paid / plugin</td>
+            </tr>
+            <tr>
+              <td class="py-3.5 px-5 text-white/85">Built-in Translate &amp; Explain Code</td>
+              <td class="py-3.5 px-5 font-mono text-xs text-emerald bg-white/[0.03]">✓ Free + BYOK Gemini/OpenAI</td>
+              <td class="py-3.5 px-5 text-white/45">Not supported</td>
+              <td class="py-3.5 px-5 text-white/45">Not supported</td>
+            </tr>
+            <tr>
+              <td class="py-3.5 px-5 text-white/85">Multi-Monitor Mixed-DPI Support</td>
+              <td class="py-3.5 px-5 font-mono text-xs text-emerald bg-white/[0.03]">✓ Per-Monitor DPI v2</td>
+              <td class="py-3.5 px-5 text-white/45">Supported</td>
+              <td class="py-3.5 px-5 text-white/45">Sometimes offsets</td>
+            </tr>
+            <tr>
+              <td class="py-3.5 px-5 text-white/85">Distribution &amp; Accounts</td>
+              <td class="py-3.5 px-5 font-mono text-xs text-emerald bg-white/[0.03]">✓ 11.4 MB .exe · No login</td>
+              <td class="py-3.5 px-5 text-white/45">Store UWP bundle</td>
+              <td class="py-3.5 px-5 text-white/45">Pro license tiers</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- =========================================================
+       SECTION 6: FREE MODE & BYOK AI MODE
+       ========================================================= -->
+  <section id="pricing" class="scroll-mt-16 border-b border-white/[0.06] bg-void">
+    <div class="max-w-[1040px] mx-auto px-4 sm:px-6 py-20 sm:py-28">
+      <div class="flex flex-col sm:flex-row sm:items-end justify-between gap-6 mb-12 scroll-reveal">
+        <div class="space-y-1.5">
+          <h2 class="text-2xl sm:text-[2.15rem] font-medium tracking-[-0.035em] text-white">
+            Free out of the box. BYOK when you want AI.
+          </h2>
+          <p class="text-sm text-white/50">No subscriptions. No accounts. Switch providers anytime in <code class="font-mono text-white/75 text-xs">config.json</code>.</p>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6 items-stretch">
+        <div class="spotlight-card scroll-reveal p-8 rounded-2xl flex flex-col justify-between">
+          <div class="relative z-10">
+            <div class="flex items-center justify-between text-xs text-white/45 mb-5">
+              <span class="font-semibold text-white/80">Free Mode (Default)</span>
+              <span>Zero API key required</span>
+            </div>
+            <div class="flex items-baseline gap-2 mb-3">
+              <span class="text-5xl font-semibold tracking-[-0.04em] text-white tabular">$0</span>
+              <span class="text-xs text-white/45">forever</span>
+            </div>
+            <p class="text-sm text-white/55 mb-8 leading-relaxed">
+              The complete Windows snipping, annotation, pinning, offline OCR &amp; free translation suite.
+            </p>
+            <ul class="space-y-3 text-sm text-white/75 mb-8">
+              <li class="flex items-start gap-2.5"><i data-lucide="check" class="w-4 h-4 text-white/60 shrink-0 mt-0.5"></i><span>Full interactive snip overlay + 8 resize handles</span></li>
+              <li class="flex items-start gap-2.5"><i data-lucide="check" class="w-4 h-4 text-white/60 shrink-0 mt-0.5"></i><span>All 6 annotation tools + irreversible Mosaic redaction</span></li>
+              <li class="flex items-start gap-2.5"><i data-lucide="check" class="w-4 h-4 text-white/60 shrink-0 mt-0.5"></i><span>Unlimited floating Pinned Screenshots (zoom &amp; opacity)</span></li>
+              <li class="flex items-start gap-2.5"><i data-lucide="check" class="w-4 h-4 text-white/60 shrink-0 mt-0.5"></i><span>Offline Windows.Media.Ocr + free Translate</span></li>
+            </ul>
+          </div>
+          <button type="button" data-plan="Free Mode" class="relative z-10 open-dl-modal magnetic-btn btn-glass w-full py-3 rounded-xl font-semibold text-sm">
+            Download for Windows (.exe)
+          </button>
+        </div>
+
+        <div class="titanium-frame scroll-reveal shadow-2xl">
+          <div class="spotlight-card h-full p-8 rounded-[17px] bg-[#0D0E14] flex flex-col justify-between border-0">
+            <div class="relative z-10">
+              <div class="flex items-center justify-between text-xs mb-5">
+                <span class="font-semibold text-accent">BYOK AI Mode</span>
+                <span class="font-mono text-[11px] px-2 py-0.5 rounded-md bg-white/[0.07] text-white/70">Gemini · OpenAI</span>
+              </div>
+              <div class="flex items-baseline gap-2 mb-3">
+                <span class="text-5xl font-semibold tracking-[-0.04em] text-white tabular">BYOK</span>
+                <span class="text-xs text-white/45">$0 app markup</span>
+              </div>
+              <p class="text-sm text-white/55 mb-8 leading-relaxed">
+                Drop your own Gemini or OpenAI API key into <code class="font-mono text-white/75 text-xs">config.json</code> for AI Code Explain &amp; nuanced translations.
+              </p>
+              <ul class="space-y-3 text-sm text-white/90 mb-8">
+                <li class="flex items-start gap-2.5"><i data-lucide="check" class="w-4 h-4 text-accent shrink-0 mt-0.5"></i><span>Everything in Free Mode included</span></li>
+                <li class="flex items-start gap-2.5"><i data-lucide="check" class="w-4 h-4 text-accent shrink-0 mt-0.5"></i><span>Press <kbd class="px-1 py-0.5 bg-white/10 rounded font-mono text-[10px]">E</kbd> to Explain Code or technical errors in Markdown</span></li>
+                <li class="flex items-start gap-2.5"><i data-lucide="check" class="w-4 h-4 text-accent shrink-0 mt-0.5"></i><span>Supports <code class="font-mono text-xs text-white/75">gemini-2.5-flash</code>, <code class="font-mono text-xs text-white/75">gpt-4o-mini</code> &amp; custom <code class="font-mono text-xs text-white/75">base_url</code></span></li>
+                <li class="flex items-start gap-2.5"><i data-lucide="check" class="w-4 h-4 text-accent shrink-0 mt-0.5"></i><span>Direct PC → Provider TLS calls (zero proxy servers)</span></li>
+                <li class="flex items-start gap-2.5"><i data-lucide="check" class="w-4 h-4 text-accent shrink-0 mt-0.5"></i><span>Optional secondary <code class="font-mono text-xs text-white/75">quick_translate_hotkey</code></span></li>
+              </ul>
+            </div>
+            <button type="button" data-plan="BYOK AI Setup" class="relative z-10 open-dl-modal magnetic-btn btn-luminous w-full py-3 rounded-xl font-semibold text-sm">
+              <span>View Download &amp; config.json</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FOOTER -->
+  <footer class="bg-void py-12">
+    <div class="max-w-[1260px] mx-auto px-4 sm:px-6 flex flex-col sm:flex-row sm:items-center justify-between gap-6">
+      <div class="space-y-1">
+        <div class="text-sm font-semibold text-white">Reticle</div>
+        <div class="text-xs text-white/45">Pure Rust · Windows 10/11 (x64) · Win32 GDI/DWM + egui + Windows.Media.Ocr</div>
+      </div>
+      <div class="flex flex-wrap items-center gap-5 text-xs text-white/55">
+        <button id="footer-shortcuts-btn" type="button" class="btn-glass inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs">
+          <span>Shortcuts</span>
+          <kbd class="font-mono text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white">?</kbd>
+        </button>
+        <a href="#playground" class="hover:text-white transition-colors">Playground</a>
+        <a href="#engine" class="hover:text-white transition-colors">Architecture</a>
+        <a href="#pricing" class="hover:text-white transition-colors">Free &amp; BYOK</a>
+      </div>
+    </div>
+  </footer>
+
+  <!-- DOWNLOAD / BUILD MODAL -->
+  <div id="download-modal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="modal-plan-title" class="modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md">
+    <div class="modal-dialog w-full max-w-md rounded-2xl glass-panel overflow-hidden">
+      <div class="px-5 py-4 border-b border-white/[0.08] flex items-center justify-between">
+        <span id="modal-plan-title" class="text-xs font-semibold text-white">Reticle v0.1 — Windows x64</span>
+        <button id="close-dl-modal" type="button" aria-label="Close modal" class="text-white/55 hover:text-white p-1">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+      <div class="p-6 space-y-5">
+        <div class="p-4 rounded-xl bg-void/70 border border-white/[0.08] space-y-1.5">
+          <div class="flex items-center justify-between font-mono text-xs">
+            <span id="modal-filename" class="text-white font-medium">snip-translate.exe</span>
+            <span class="text-emerald font-medium">11.4 MB</span>
+          </div>
+          <div class="font-mono text-[10.5px] text-white/50">
+            Windows 10/11 x64 · Portable single binary · No installer needed
+          </div>
+          <div class="font-mono text-[10px] text-white/40">
+            Config: %APPDATA%\snip-translate\config.json
+          </div>
+        </div>
+
+        <div>
+          <div class="text-[11px] text-white/50 mb-1.5">Build locally with Cargo</div>
+          <div class="flex items-center justify-between gap-2 px-3.5 py-2.5 rounded-xl bg-void/80 border border-white/[0.08] font-mono text-xs text-white/85">
+            <code id="modal-cli" class="truncate">cargo build --release</code>
+            <button id="modal-cli-copy" type="button" class="btn-glass shrink-0 px-2.5 py-1 rounded-lg text-[11px] font-medium">Copy</button>
+          </div>
+        </div>
+
+        <button id="modal-start-dl" type="button" class="btn-luminous w-full py-3 px-4 rounded-xl font-semibold text-sm flex items-center justify-center gap-2">
+          <i data-lucide="terminal" class="w-4 h-4 shrink-0"></i>
+          <span id="modal-dl-btn-text">Copy Launch Command (.exe)</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- KEYBOARD SHORTCUTS SHEET -->
+  <div id="shortcuts-modal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="shortcuts-modal-title" class="modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md">
+    <div class="modal-dialog w-full max-w-md rounded-2xl glass-panel overflow-hidden">
+      <div class="px-5 py-4 border-b border-white/[0.08] flex items-center justify-between">
+        <span id="shortcuts-modal-title" class="text-xs font-semibold text-white">Reticle Keyboard Shortcuts</span>
+        <button id="close-shortcuts-modal" type="button" aria-label="Close shortcuts" class="text-white/55 hover:text-white p-1">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+      <div class="p-5 space-y-2.5 text-xs">
+        <div class="flex justify-between items-center py-1.5 border-b border-white/[0.07]">
+          <span class="text-white/70">Open Snipping Tool (Global)</span>
+          <kbd class="font-mono px-2 py-0.5 rounded bg-white/10 text-white">Ctrl + Shift + O</kbd>
+        </div>
+        <div class="flex justify-between items-center py-1.5 border-b border-white/[0.07]">
+          <span class="text-white/70">Copy Image to Clipboard</span>
+          <kbd class="font-mono px-2 py-0.5 rounded bg-white/10 text-white">Enter / Ctrl + C</kbd>
+        </div>
+        <div class="flex justify-between items-center py-1.5 border-b border-white/[0.07]">
+          <span class="text-white/70">Save PNG (Pictures\SnipTool)</span>
+          <kbd class="font-mono px-2 py-0.5 rounded bg-white/10 text-white">Ctrl + S</kbd>
+        </div>
+        <div class="flex justify-between items-center py-1.5 border-b border-white/[0.07]">
+          <span class="text-white/70">Pin Floating Screenshot</span>
+          <kbd class="font-mono px-2 py-0.5 rounded bg-white/10 text-white">P</kbd>
+        </div>
+        <div class="flex justify-between items-center py-1.5 border-b border-white/[0.07]">
+          <span class="text-white/70">Offline OCR / Translate / Explain</span>
+          <kbd class="font-mono px-2 py-0.5 rounded bg-white/10 text-white">O · T · E</kbd>
+        </div>
+        <div class="flex justify-between items-center py-1.5 border-b border-white/[0.07]">
+          <span class="text-white/70">Rect · Arrow · Pen · Hi · Mosaic · Text</span>
+          <kbd class="font-mono px-2 py-0.5 rounded bg-white/10 text-white">1 – 6</kbd>
+        </div>
+        <div class="flex justify-between items-center py-1.5 border-b border-white/[0.07]">
+          <span class="text-white/70">Undo / Redo Annotations</span>
+          <kbd class="font-mono px-2 py-0.5 rounded bg-white/10 text-white">Ctrl+Z / Ctrl+Y</kbd>
+        </div>
+        <div class="flex justify-between items-center py-1.5">
+          <span class="text-white/70">Nudge Selection (1px / 10px)</span>
+          <kbd class="font-mono px-2 py-0.5 rounded bg-white/10 text-white">Arrows / Shift+Arrows</kbd>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TOAST -->
+  <div id="toast" role="status" aria-live="polite" class="toast-pill fixed bottom-5 right-5 z-50 pointer-events-none px-4 py-2.5 rounded-xl glass-panel text-xs font-medium text-white flex items-center gap-2.5">
+    <span class="w-2 h-2 rounded-full bg-emerald"></span>
+    <span id="toast-msg">Copied to clipboard</span>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

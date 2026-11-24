@@ -1,0 +1,12 @@
+/target/
+node_modules/
+website/dist/
+*.log
+*.pdb
+.env*
+!.env.example
+.DS_Store
+Thumbs.db
+.audit/
+.wt/
+.taste-skill/

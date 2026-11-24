@@ -1,0 +1,737 @@
+use image::imageops::FilterType;
+use image::{ImageFormat, Rgba, RgbaImage};
+use thiserror::Error;
+use windows::Globalization::Language;
+use windows::Graphics::Imaging::{BitmapPixelFormat, SoftwareBitmap};
+use windows::Media::Ocr::OcrEngine;
+use windows::Storage::Streams::DataWriter;
+use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
+
+const MAX_OCR_DIM: u32 = 3600;
+const OCR_BORDER_PAD: u32 = 40;
+
+#[derive(Debug, Error)]
+pub enum OcrError {
+    #[error("failed to decode cropped PNG for OCR: {0}")]
+    ImageDecode(String),
+    #[error("no Windows OCR language packs are installed on this machine")]
+    NoRecognizerAvailable,
+    #[error("Windows.Media.Ocr failed: {0}")]
+    WinRt(String),
+}
+
+struct ComGuard {
+    should_uninit: bool,
+}
+
+impl ComGuard {
+    fn init_mta() -> Self {
+        // SAFETY: Standard WinRT/COM thread initialization; paired with CoUninitialize only if S_OK/S_FALSE.
+        let hr = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+        Self {
+            should_uninit: hr.is_ok(),
+        }
+    }
+}
+
+impl Drop for ComGuard {
+    fn drop(&mut self) {
+        if self.should_uninit {
+            // SAFETY: Matches a successful CoInitializeEx on the same thread.
+            unsafe {
+                CoUninitialize();
+            }
+        }
+    }
+}
+
+fn recognize_with_engine(engine: &OcrEngine, bitmap: &SoftwareBitmap) -> Result<String, OcrError> {
+    let async_op = engine
+        .RecognizeAsync(bitmap)
+        .map_err(|e| OcrError::WinRt(format!("OcrEngine::RecognizeAsync: {e}")))?;
+    let result = async_op
+        .join()
+        .map_err(|e| OcrError::WinRt(format!("OcrResult::join: {e}")))?;
+
+    let lines = result
+        .Lines()
+        .map_err(|e| OcrError::WinRt(format!("OcrResult::Lines: {e}")))?;
+
+    let mut collected = Vec::new();
+    for line in lines {
+        if let Ok(text) = line.Text() {
+            let line_str = text.to_string_lossy();
+            let trimmed = line_str.trim();
+            if !trimmed.is_empty() {
+                collected.push(trimmed.to_string());
+            }
+        }
+    }
+
+    Ok(collected.join("\n"))
+}
+
+/// Scores OCR output quality so multi-language Windows OCR picks the cleanest script match.
+/// Non-ASCII letters (CJK, Kana, Hangul, Cyrillic, Arabic, Thai, Vietnamese diacritics) carry
+/// high information density per glyph and outscore Latin-only recognizers that drop CJK text.
+pub fn score_ocr_text(text: &str) -> usize {
+    let mut score = 0usize;
+    for ch in text.chars() {
+        if ch.is_alphabetic() {
+            score += if ch.is_ascii() { 2 } else { 6 };
+        } else if ch.is_ascii_digit() {
+            score += 1;
+        }
+    }
+    score
+}
+
+fn average_luma(img: &RgbaImage) -> f32 {
+    let raw = img.as_raw();
+    if raw.is_empty() {
+        return 255.0;
+    }
+    let step = (raw.len() / 4 / 2048).max(1);
+    let mut sum = 0.0f64;
+    let mut count = 0u64;
+    for px in raw.chunks_exact(4).step_by(step) {
+        let luma = 0.299 * px[0] as f64 + 0.587 * px[1] as f64 + 0.114 * px[2] as f64;
+        sum += luma;
+        count += 1;
+    }
+    if count == 0 {
+        255.0
+    } else {
+        (sum / count as f64) as f32
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ContrastMode {
+    None,
+    InvertPercentileStretch,
+    BinarizeOtsu { invert: bool },
+}
+
+fn rgb_luma(r: u8, g: u8, b: u8) -> u8 {
+    (0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32).clamp(0.0, 255.0) as u8
+}
+
+/// Computes Otsu's optimal binary threshold for grayscale luminance values.
+fn otsu_threshold(hist: &[u32; 256], total: u64) -> u8 {
+    if total == 0 {
+        return 128;
+    }
+    let mut sum_all = 0.0f64;
+    for (i, &count) in hist.iter().enumerate() {
+        sum_all += (i as f64) * (count as f64);
+    }
+    let mut sum_bg = 0.0f64;
+    let mut weight_bg = 0u64;
+    let mut max_var = -1.0f64;
+    let mut best_t = 128u8;
+
+    for (t, &count) in hist.iter().enumerate() {
+        weight_bg += count as u64;
+        if weight_bg == 0 {
+            continue;
+        }
+        let weight_fg = total - weight_bg;
+        if weight_fg == 0 {
+            break;
+        }
+        sum_bg += (t as f64) * (count as f64);
+        let mean_bg = sum_bg / (weight_bg as f64);
+        let mean_fg = (sum_all - sum_bg) / (weight_fg as f64);
+        let diff = mean_bg - mean_fg;
+        let between_var = (weight_bg as f64) * (weight_fg as f64) * diff * diff;
+        if between_var > max_var {
+            max_var = between_var;
+            best_t = t as u8;
+        }
+    }
+    best_t
+}
+
+/// Prepares a screenshot crop for high-accuracy `Windows.Media.Ocr`:
+/// 1. Upscales small UI snips (up to 4x Catmull-Rom) so tiny 11-14px CJK strokes resolve cleanly.
+/// 2. Handles dark-mode / low-contrast gray-on-black text via percentile contrast stretch or Otsu binarization.
+/// 3. Adds generous 40px quiet-zone padding around all edges so edge-touching glyphs aren't dropped.
+fn preprocess_for_ocr(src: &RgbaImage, mode: ContrastMode, max_dim: u32) -> RgbaImage {
+    let (w, h) = src.dimensions();
+    let desired_scale = if h < 48 || w < 140 {
+        4u32
+    } else if h < 90 || w < 240 {
+        3u32
+    } else if h < 1400 && w < 1800 {
+        2u32
+    } else {
+        1u32
+    };
+
+    let pad = OCR_BORDER_PAD;
+    let usable_max = max_dim.saturating_sub(pad * 2).max(256);
+    let mut scale = desired_scale;
+    while scale > 1 && (w * scale > usable_max || h * scale > usable_max) {
+        scale -= 1;
+    }
+
+    let resized = if scale > 1 {
+        image::imageops::resize(src, w * scale, h * scale, FilterType::CatmullRom)
+    } else {
+        src.clone()
+    };
+
+    let (rw, rh) = resized.dimensions();
+    let fill = match mode {
+        ContrastMode::None => *resized.get_pixel(0, 0),
+        ContrastMode::InvertPercentileStretch | ContrastMode::BinarizeOtsu { .. } => {
+            Rgba([255, 255, 255, 255])
+        }
+    };
+
+    let mut out = RgbaImage::from_pixel(rw + pad * 2, rh + pad * 2, fill);
+
+    match mode {
+        ContrastMode::None => {
+            image::imageops::overlay(&mut out, &resized, pad as i64, pad as i64);
+        }
+        ContrastMode::InvertPercentileStretch => {
+            let mut hist = [0u32; 256];
+            let total = (rw as u64) * (rh as u64);
+            for px in resized.pixels() {
+                let inv_luma = 255 - rgb_luma(px[0], px[1], px[2]);
+                hist[inv_luma as usize] += 1;
+            }
+            // Use 1st..98th percentile so stray 1px window borders don't defeat contrast stretching
+            let lo_target = (total / 100).max(1);
+            let hi_target = ((total * 98) / 100).max(lo_target);
+            let mut acc = 0u64;
+            let mut lo = 0u8;
+            let mut hi = 255u8;
+            for (v, &c) in hist.iter().enumerate() {
+                acc += c as u64;
+                if acc >= lo_target && lo == 0 {
+                    lo = v as u8;
+                }
+                if acc >= hi_target {
+                    hi = v as u8;
+                    break;
+                }
+            }
+            let span = (hi.saturating_sub(lo)).max(1) as f32;
+            let stretch = span > 16.0;
+
+            for (x, y, px) in resized.enumerate_pixels() {
+                let inv = 255 - rgb_luma(px[0], px[1], px[2]);
+                let mapped = if stretch {
+                    (((inv.saturating_sub(lo)) as f32 / span) * 255.0).clamp(0.0, 255.0) as u8
+                } else {
+                    inv
+                };
+                out.put_pixel(x + pad, y + pad, Rgba([mapped, mapped, mapped, 255]));
+            }
+        }
+        ContrastMode::BinarizeOtsu { invert } => {
+            let mut hist = [0u32; 256];
+            let total = (rw as u64) * (rh as u64);
+            for px in resized.pixels() {
+                let l = rgb_luma(px[0], px[1], px[2]);
+                let v = if invert { 255 - l } else { l };
+                hist[v as usize] += 1;
+            }
+            let threshold = otsu_threshold(&hist, total);
+            for (x, y, px) in resized.enumerate_pixels() {
+                let l = rgb_luma(px[0], px[1], px[2]);
+                let v = if invert { 255 - l } else { l };
+                // Soft binarization keeps anti-aliased edge smoothness while crushing low-contrast gray
+                let out_v = if v < threshold { 0 } else { 255 };
+                out.put_pixel(x + pad, y + pad, Rgba([out_v, out_v, out_v, 255]));
+            }
+        }
+    }
+
+    out
+}
+
+fn rgba_to_software_bitmap(img: &RgbaImage) -> Result<SoftwareBitmap, OcrError> {
+    let width = img.width() as i32;
+    let height = img.height() as i32;
+    let mut bgra = Vec::with_capacity((width as usize) * (height as usize) * 4);
+    for px in img.as_raw().chunks_exact(4) {
+        bgra.push(px[2]); // B
+        bgra.push(px[1]); // G
+        bgra.push(px[0]); // R
+        bgra.push(255); // A
+    }
+
+    let writer =
+        DataWriter::new().map_err(|e| OcrError::WinRt(format!("DataWriter::new: {e}")))?;
+    writer
+        .WriteBytes(&bgra)
+        .map_err(|e| OcrError::WinRt(format!("DataWriter::WriteBytes: {e}")))?;
+    let buffer = writer
+        .DetachBuffer()
+        .map_err(|e| OcrError::WinRt(format!("DataWriter::DetachBuffer: {e}")))?;
+
+    SoftwareBitmap::CreateCopyFromBuffer(&buffer, BitmapPixelFormat::Bgra8, width, height)
+        .map_err(|e| OcrError::WinRt(format!("SoftwareBitmap::CreateCopyFromBuffer: {e}")))
+}
+
+fn build_candidate_engines() -> Result<Vec<(String, OcrEngine)>, OcrError> {
+    let mut engines = Vec::new();
+    let mut seen_tags = std::collections::HashSet::new();
+
+    if let Ok(engine) = OcrEngine::TryCreateFromUserProfileLanguages() {
+        let tag = engine
+            .RecognizerLanguage()
+            .and_then(|l| l.LanguageTag())
+            .map(|s| s.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_else(|_| "profile".to_string());
+        seen_tags.insert(tag.clone());
+        engines.push((tag, engine));
+    }
+
+    if let Ok(langs) = OcrEngine::AvailableRecognizerLanguages() {
+        let mut fallback_langs: Vec<(String, Language)> = Vec::new();
+        for lang in langs {
+            let tag = lang
+                .LanguageTag()
+                .map(|s| s.to_string_lossy().to_ascii_lowercase())
+                .unwrap_or_default();
+            if !tag.is_empty() && !seen_tags.contains(&tag) {
+                fallback_langs.push((tag, lang));
+            }
+        }
+        fallback_langs.sort_by_key(|(tag, _)| if tag.starts_with("en") { 0 } else { 1 });
+        for (tag, lang) in fallback_langs.into_iter().take(6) {
+            if let Ok(engine) = OcrEngine::TryCreateFromLanguage(&lang) {
+                seen_tags.insert(tag.clone());
+                engines.push((tag, engine));
+            }
+        }
+    }
+
+    if engines.is_empty() {
+        return Err(OcrError::NoRecognizerAvailable);
+    }
+    Ok(engines)
+}
+
+fn run_engines_best(engines: &[(String, OcrEngine)], bitmap: &SoftwareBitmap) -> (String, usize) {
+    let mut best_text = String::new();
+    let mut best_score = 0usize;
+
+    for (tag, engine) in engines {
+        match recognize_with_engine(engine, bitmap) {
+            Ok(text) => {
+                let score = score_ocr_text(&text);
+                if score > best_score || (best_text.is_empty() && !text.is_empty()) {
+                    best_score = score;
+                    best_text = text;
+                }
+            }
+            Err(err) => {
+                log::warn!("Windows OCR recognizer '{tag}' failed: {err}");
+            }
+        }
+    }
+    (best_text, best_score)
+}
+
+/// Extract text from cropped PNG bytes using Windows built-in offline `Windows.Media.Ocr`.
+/// Automatically upscales small UI text, handles dark-mode backgrounds (Spotify/VS Code),
+/// and evaluates installed Windows OCR language packs (Chinese, English, Japanese, etc.).
+pub fn extract_text_from_png(png_bytes: &[u8]) -> Result<String, OcrError> {
+    let _com = ComGuard::init_mta();
+
+    let decoded = image::load_from_memory_with_format(png_bytes, ImageFormat::Png)
+        .map_err(|e| OcrError::ImageDecode(e.to_string()))?
+        .to_rgba8();
+
+    if decoded.width() == 0 || decoded.height() == 0 {
+        return Ok(String::new());
+    }
+
+    let engines = build_candidate_engines()?;
+    let engine_max_dim = OcrEngine::MaxImageDimension()
+        .ok()
+        .filter(|&d| d >= 512)
+        .unwrap_or(MAX_OCR_DIM)
+        .min(MAX_OCR_DIM);
+    let is_dark_bg = average_luma(&decoded) < 126.0;
+
+    // Pass 1: Upscaled + padded (with percentile-stretched dark inversion when dark background)
+    let pass1_mode = if is_dark_bg {
+        ContrastMode::InvertPercentileStretch
+    } else {
+        ContrastMode::None
+    };
+    let primary_img = preprocess_for_ocr(&decoded, pass1_mode, engine_max_dim);
+    let primary_bmp = rgba_to_software_bitmap(&primary_img)?;
+    let (mut best_text, mut best_score) = run_engines_best(&engines, &primary_bmp);
+
+    // Pass 2: For dark-mode UI screenshots (which often mix dark panes, bright badges,
+    // syntax-highlighted code, and subtle borders), always compare against a non-inverted pass
+    // and keep whichever captures more complete text.
+    if is_dark_bg {
+        let alt_img = preprocess_for_ocr(&decoded, ContrastMode::None, engine_max_dim);
+        let alt_bmp = rgba_to_software_bitmap(&alt_img)?;
+        let (alt_text, alt_score) = run_engines_best(&engines, &alt_bmp);
+        if alt_score > best_score {
+            best_text = alt_text;
+            best_score = alt_score;
+        }
+    }
+
+    // Pass 3: If low-contrast tiny text (e.g. muted #757575 gray Spotify credits on #181818)
+    // still yielded little/no text, run high-contrast Otsu binarized fallback.
+    if best_score < 12 {
+        let otsu_img = preprocess_for_ocr(
+            &decoded,
+            ContrastMode::BinarizeOtsu { invert: is_dark_bg },
+            engine_max_dim,
+        );
+        let otsu_bmp = rgba_to_software_bitmap(&otsu_img)?;
+        let (otsu_text, otsu_score) = run_engines_best(&engines, &otsu_bmp);
+        if otsu_score > best_score {
+            best_text = otsu_text;
+            best_score = otsu_score;
+        }
+    }
+
+    log::info!(
+        "OCR finished (dark_bg={is_dark_bg}, engines={}, score={best_score}, chars={})",
+        engines.len(),
+        best_text.chars().count()
+    );
+    Ok(best_text)
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+    use image::codecs::png::PngEncoder;
+    use image::{ExtendedColorType, ImageEncoder};
+    use windows::core::{w, PCWSTR};
+    use windows::Win32::Foundation::{COLORREF, RECT};
+    use windows::Win32::Graphics::Gdi::{
+        CreateCompatibleBitmap, CreateCompatibleDC, CreateFontW, CreateSolidBrush, DeleteDC,
+        DeleteObject, DrawTextW, FillRect, GetDC, GetDIBits, ReleaseDC, SelectObject, SetBkMode,
+        SetTextColor, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, CLIP_DEFAULT_PRECIS, DEFAULT_CHARSET,
+        DEFAULT_QUALITY, DIB_RGB_COLORS, DT_CENTER, DT_SINGLELINE, DT_VCENTER, FF_SWISS, FW_BOLD,
+        FW_NORMAL, HGDIOBJ, OUT_DEFAULT_PRECIS, TRANSPARENT,
+    };
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_styled_png(
+        text: &str,
+        width: i32,
+        height: i32,
+        font_height: i32,
+        font_name: PCWSTR,
+        bg_bgr: u32,
+        fg_bgr: u32,
+        bold: bool,
+    ) -> Vec<u8> {
+        // SAFETY: Renders text onto an offscreen DIB for testing Windows.Media.Ocr.
+        unsafe {
+            let screen_dc = GetDC(None);
+            let mem_dc = CreateCompatibleDC(Some(screen_dc));
+            let bmp = CreateCompatibleBitmap(screen_dc, width, height);
+            let prev_bmp = SelectObject(mem_dc, HGDIOBJ(bmp.0));
+
+            let bg = CreateSolidBrush(COLORREF(bg_bgr));
+            let mut rect = RECT {
+                left: 0,
+                top: 0,
+                right: width,
+                bottom: height,
+            };
+            let _ = FillRect(mem_dc, &rect, bg);
+
+            let font = CreateFontW(
+                -font_height,
+                0,
+                0,
+                0,
+                if bold { FW_BOLD.0 } else { FW_NORMAL.0 } as i32,
+                0,
+                0,
+                0,
+                DEFAULT_CHARSET,
+                OUT_DEFAULT_PRECIS,
+                CLIP_DEFAULT_PRECIS,
+                DEFAULT_QUALITY,
+                FF_SWISS.0 as u32,
+                font_name,
+            );
+            let prev_font = SelectObject(mem_dc, HGDIOBJ(font.0));
+            let _ = SetBkMode(mem_dc, TRANSPARENT);
+            let _ = SetTextColor(mem_dc, COLORREF(fg_bgr));
+
+            if !text.is_empty() {
+                let mut wide: Vec<u16> = text.encode_utf16().collect();
+                let _ = DrawTextW(
+                    mem_dc,
+                    &mut wide,
+                    &mut rect,
+                    DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+                );
+            }
+
+            let mut bmi = BITMAPINFO {
+                bmiHeader: BITMAPINFOHEADER {
+                    biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                    biWidth: width,
+                    biHeight: -height,
+                    biPlanes: 1,
+                    biBitCount: 32,
+                    biCompression: BI_RGB.0,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let mut bgra = vec![0u8; (width as usize) * (height as usize) * 4];
+            let _ = GetDIBits(
+                mem_dc,
+                bmp,
+                0,
+                height as u32,
+                Some(bgra.as_mut_ptr().cast()),
+                &mut bmi,
+                DIB_RGB_COLORS,
+            );
+
+            let _ = SelectObject(mem_dc, prev_font);
+            let _ = SelectObject(mem_dc, prev_bmp);
+            let _ = DeleteObject(HGDIOBJ(font.0));
+            let _ = DeleteObject(HGDIOBJ(bg.0));
+            let _ = DeleteObject(HGDIOBJ(bmp.0));
+            let _ = DeleteDC(mem_dc);
+            ReleaseDC(None, screen_dc);
+
+            let mut rgba = Vec::with_capacity(bgra.len());
+            for px in bgra.chunks_exact(4) {
+                rgba.push(px[2]);
+                rgba.push(px[1]);
+                rgba.push(px[0]);
+                rgba.push(255);
+            }
+            let mut png = Vec::new();
+            PngEncoder::new(&mut png)
+                .write_image(&rgba, width as u32, height as u32, ExtendedColorType::Rgba8)
+                .expect("encode test png");
+            png
+        }
+    }
+
+    pub(crate) fn render_text_png(text: &str, width: i32, height: i32) -> Vec<u8> {
+        render_styled_png(
+            text,
+            width,
+            height,
+            36,
+            w!("Segoe UI"),
+            0x00FFFFFF,
+            0x00000000,
+            true,
+        )
+    }
+
+    #[test]
+    fn score_ocr_text_prefers_clean_multilingual_text_over_noise() {
+        assert!(score_ocr_text("我叫长安") > score_ocr_text("... ---"));
+        assert!(score_ocr_text("我叫长安 Chinese") > score_ocr_text("Chinese"));
+        assert!(score_ocr_text("Xin chào thế giới") > score_ocr_text("|||"));
+        assert_eq!(score_ocr_text("   ...   "), 0);
+    }
+
+    #[test]
+    fn windows_ocr_extracts_rendered_text_and_handles_blank_image() {
+        let blank_png = render_text_png("", 240, 80);
+        let blank_text = extract_text_from_png(&blank_png).expect("ocr on blank png");
+        assert!(
+            blank_text.trim().is_empty(),
+            "expected empty OCR result on blank image, got: {blank_text:?}"
+        );
+
+        let text_png = render_text_png("Hello World 2026", 480, 120);
+        let extracted = extract_text_from_png(&text_png).expect("ocr on rendered text");
+        let lower = extracted.to_ascii_lowercase();
+        assert!(
+            lower.contains("hello") && lower.contains("world"),
+            "expected Windows.Media.Ocr to extract 'Hello World', got: {extracted:?}"
+        );
+    }
+
+    fn has_cjk_ocr_pack() -> bool {
+        let _com = ComGuard::init_mta();
+        OcrEngine::AvailableRecognizerLanguages()
+            .ok()
+            .into_iter()
+            .flatten()
+            .filter_map(|lang| lang.LanguageTag().ok())
+            .any(|tag| {
+                let t = tag.to_string_lossy().to_ascii_lowercase();
+                t.starts_with("zh") || t.starts_with("ja") || t.starts_with("ko")
+            })
+    }
+
+    #[test]
+    fn windows_ocr_extracts_small_dark_mode_chinese_spotify_style() {
+        if !has_cjk_ocr_pack() {
+            // Skip CJK-specific glyph assertions on en-US-only CI runners without Chinese OCR packs.
+            return;
+        }
+        // Reproduces Spotify dark mode (#121212 background, #B8B8B8 14px Microsoft YaHei Chinese text)
+        let dark_zh_png = render_styled_png(
+            "我叫长安，你叫故里",
+            220,
+            34,
+            14,
+            w!("Microsoft YaHei"),
+            0x00121212,
+            0x00B8B8B8,
+            false,
+        );
+        let extracted = extract_text_from_png(&dark_zh_png).expect("ocr on dark-mode chinese");
+        let has_chinese = extracted.chars().any(|c| ('\u{4E00}'..='\u{9FFF}').contains(&c));
+        assert!(
+            has_chinese,
+            "expected Windows.Media.Ocr (zh-Hans-CN) to detect small dark-mode Chinese text, got: {extracted:?}"
+        );
+
+        // Also reproduces faint 12px dim gray (#787878) 4-char Chinese credits ("欧阳尚尚") on #181818
+        let faint_zh_png = render_styled_png(
+            "欧阳尚尚",
+            92,
+            24,
+            13,
+            w!("Microsoft YaHei"),
+            0x00181818,
+            0x00787878,
+            false,
+        );
+        let extracted2 = extract_text_from_png(&faint_zh_png).expect("ocr on faint 4-char chinese");
+        let has_chinese2 = extracted2.chars().any(|c| ('\u{4E00}'..='\u{9FFF}').contains(&c));
+        assert!(
+            has_chinese2,
+            "expected Windows.Media.Ocr to detect faint 4-char Spotify Chinese '欧阳尚尚', got: {extracted2:?}"
+        );
+    }
+
+    #[test]
+    fn real_png_fixture_dark_ui_code_card_extracts_full_text() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("dark_ui_code_card.png");
+        let bytes = std::fs::read(&path).expect("read tests/fixtures/dark_ui_code_card.png");
+        let text = extract_text_from_png(&bytes).expect("OCR dark_ui_code_card.png");
+        let lower = text.to_ascii_lowercase();
+        assert!(
+            lower.contains("reticle") && lower.contains("windows") && lower.contains("cargo"),
+            "expected full dark-mode UI + code pill text from fixture, got: {text:?}"
+        );
+    }
+
+    #[test]
+    fn real_png_fixture_light_doc_checklist_extracts_all_lines() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("light_doc_checklist.png");
+        let bytes = std::fs::read(&path).expect("read tests/fixtures/light_doc_checklist.png");
+        let text = extract_text_from_png(&bytes).expect("OCR light_doc_checklist.png");
+        let lower = text.to_ascii_lowercase();
+        assert!(
+            lower.contains("release checklist")
+                && lower.contains("dwm")
+                && lower.contains("side-docked")
+                && lower.contains("upscaling"),
+            "expected all checklist lines from light_doc_checklist.png, got: {text:?}"
+        );
+    }
+
+    #[test]
+    fn real_png_fixture_dark_ui_cjk_card_extracts_multilingual_text() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("dark_ui_cjk_card.png");
+        let bytes = std::fs::read(&path).expect("read tests/fixtures/dark_ui_cjk_card.png");
+        let text = extract_text_from_png(&bytes).expect("OCR dark_ui_cjk_card.png");
+        let lower = text.to_ascii_lowercase();
+        assert!(
+            lower.contains("midnight") && lower.contains("2026"),
+            "expected Latin subtitle from dark_ui_cjk_card.png, got: {text:?}"
+        );
+        if has_cjk_ocr_pack() {
+            assert!(
+                text.chars().any(|c| ('\u{4E00}'..='\u{9FFF}').contains(&c)),
+                "expected Chinese glyphs from dark_ui_cjk_card.png when CJK OCR pack is installed, got: {text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn real_png_fixture_annotation_composite_and_reencode_roundtrip() {
+        use crate::capture::{CroppedImage, ScreenRect};
+        use crate::snip::annotate::{AnnotationDoc, AnnotationOp, StrokeSize, PALETTE};
+        use crate::snip::raster::composite_annotations;
+        use crate::snip::state::ScreenPt;
+
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("dark_ui_code_card.png");
+        let bytes = std::fs::read(&path).expect("read fixture png");
+        let decoded = image::load_from_memory_with_format(&bytes, ImageFormat::Png)
+            .expect("decode fixture png")
+            .to_rgba8();
+        let (w, h) = decoded.dimensions();
+
+        let mut cropped = CroppedImage {
+            width: w,
+            height: h,
+            rgba: decoded.into_raw(),
+            screen_rect: ScreenRect {
+                x: 0,
+                y: 0,
+                width: w as i32,
+                height: h as i32,
+            },
+        };
+
+        let mut doc = AnnotationDoc::default();
+        doc.push(AnnotationOp::Rect {
+            from: ScreenPt { x: 40, y: 40 },
+            to: ScreenPt { x: 360, y: 120 },
+            color: PALETTE[0],
+            stroke_px: StrokeSize::Medium.stroke_px(),
+        });
+        doc.push(AnnotationOp::Mosaic {
+            rect: ScreenRect {
+                x: 52,
+                y: 194,
+                width: 188,
+                height: 44,
+            },
+            block_size: 10,
+        });
+
+        let before = cropped.rgba.clone();
+        composite_annotations(&mut cropped, &doc);
+        assert_ne!(
+            cropped.rgba, before,
+            "compositing annotations onto real PNG fixture must mutate pixels"
+        );
+
+        let reencoded = cropped.to_captured_region().expect("re-encode annotated png");
+        let verified = image::load_from_memory_with_format(&reencoded.png_bytes, ImageFormat::Png)
+            .expect("re-decode annotated png")
+            .to_rgba8();
+        assert_eq!(verified.dimensions(), (w, h));
+    }
+}
