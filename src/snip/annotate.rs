@@ -54,11 +54,11 @@ impl StrokeSize {
 }
 
 pub const PALETTE: [[u8; 4]; 5] = [
-    [239, 68, 68, 255],  // Red
-    [245, 158, 11, 255], // Amber
-    [34, 197, 94, 255],  // Emerald
-    [56, 189, 248, 255], // Sky
-    [250, 250, 250, 255], // White
+    [239, 68, 68, 255],
+    [245, 158, 11, 255],
+    [34, 197, 94, 255],
+    [56, 189, 248, 255],
+    [250, 250, 250, 255],
 ];
 
 #[derive(Debug, Clone, PartialEq)]
@@ -306,7 +306,6 @@ pub fn paint_op(
             }
             let p = phys_pt_to_logical(*pos, canvas, bounds);
             let font = FontId::proportional((font_px * scale).max(10.0));
-            // Subtle dark shadow for readability on bright backgrounds
             painter.text(
                 p + Vec2::new(1.0, 1.0),
                 Align2::LEFT_TOP,
@@ -456,7 +455,6 @@ mod tests {
             }
         ));
 
-        // Drag back past anchor (up-left) -> must shrink & flip cleanly instead of staying 120x80
         draft.update(ScreenPt { x: 60, y: 70 });
         assert!(matches!(
             draft.op,

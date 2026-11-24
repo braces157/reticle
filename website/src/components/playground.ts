@@ -151,7 +151,6 @@ export function initPlayground(): void {
     selBox.style.height = `${box.h}px`;
     selDims.textContent = `${Math.round(box.w)} × ${Math.round(box.h)} px`;
 
-    // Flip quickbar above selection if close to stage bottom
     const nearBottom = box.y + box.h + 52 > stageRect.height;
     selQuickbar.style.bottom = nearBottom ? 'auto' : '-44px';
     selQuickbar.style.top = nearBottom ? '-44px' : 'auto';
@@ -194,7 +193,6 @@ export function initPlayground(): void {
     if (hudMode) hudMode.textContent = data.mode;
     if (hudMeta) hudMeta.textContent = data.meta;
 
-    // Delegate preset segmented pill sync cleanly to chrome.ts spring track
     const presetTrack = document.getElementById('preset-seg-track');
     const activeBtn = presetTrack?.querySelector<HTMLButtonElement>(
       `.preset-snip-btn[data-target="${key}"]`,
@@ -271,7 +269,6 @@ export function initPlayground(): void {
     });
   });
 
-  // Tool toggles (clicking Arrow/Blur/Rect also drops a crisp starter demo stroke if empty)
   const toggleTool = (tool: Exclude<DrawTool, null>, label: string) => {
     sound.play('tick');
     if (activeTool === tool) {
@@ -322,7 +319,6 @@ export function initPlayground(): void {
     copyText(TARGETS[activeTarget].formats[activeFormat], `Copied ${activeFormat}`);
   });
 
-  // Draggable & scroll-zoomable Pinned Card inside the stage
   let pinZoom = 1;
   document.getElementById('quick-pin-btn')?.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -390,7 +386,6 @@ export function initPlayground(): void {
     selQuickbar.classList.add('hidden');
   });
 
-  // Stage pointer state machine (select, move, 8-handle resize, and live canvas draw)
   const stageCoords = (e: PointerEvent) => {
     const r = stage.getBoundingClientRect();
     return {
@@ -427,7 +422,6 @@ export function initPlayground(): void {
 
     const pt = stageCoords(e);
 
-    // 1. Check 8 resize handles
     const handleEl = target.closest<HTMLElement>('.sel-handle');
     if (handleEl && !selBox.classList.contains('hidden')) {
       const handle = handleEl.dataset.handle as HandleDir;
@@ -436,7 +430,6 @@ export function initPlayground(): void {
       return;
     }
 
-    // 2. Inside active selection box -> draw if tool active, else move box
     const boxVisible = !selBox.classList.contains('hidden');
     const insideBox =
       boxVisible &&
@@ -460,7 +453,6 @@ export function initPlayground(): void {
       return;
     }
 
-    // 3. Otherwise begin fresh rubber-band selection
     ops = [];
     draftOp = null;
     activeTool = null;
@@ -682,7 +674,6 @@ function paintOp(ctx: CanvasRenderingContext2D, op: DrawOp): void {
     return;
   }
 
-  // Mosaic pixelation blocks
   const x0 = Math.min(op.x1, op.x2);
   const y0 = Math.min(op.y1, op.y2);
   const w = Math.abs(op.x2 - op.x1);

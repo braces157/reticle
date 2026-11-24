@@ -49,8 +49,6 @@ const QUICK_LANGUAGES: &[(&str, &str)] = &[
     ("bn", "Bengali · বাংলা"),
 ];
 
-/// Renders the obsidian toolmaker popover using pinned `Panel::top`, optional `Panel::bottom`,
-/// and auto-measured `CentralPanel`.
 pub fn render_popup(app: &mut SnipPopupApp, ui: &mut egui::Ui, ctx: &egui::Context) {
     Panel::top("snip_header")
         .exact_size(HEADER_HEIGHT)
@@ -119,7 +117,6 @@ fn draw_hairline(ui: &mut egui::Ui) {
     ui.painter().rect_filled(rect, 0.0, theme::BORDER_HAIRLINE);
 }
 
-/// Subtle architectural dot matrix on status/loading surfaces (never competes with foreground ink).
 fn paint_subtle_dot_grid(painter: &egui::Painter, rect: Rect) {
     let step = 18.0;
     let mut y = rect.top() + 10.0;
@@ -263,8 +260,6 @@ fn pin_toggle_button(ui: &mut egui::Ui, pinned: bool) -> egui::Response {
     response
 }
 
-/// Full-capsule button: inverted pure white (`#FFF` / `#0A0A0A`) for primary CTAs,
-/// quiet hairline graphite capsule for secondary actions.
 fn action_pill_button(ui: &mut egui::Ui, label: &str, primary: bool) -> egui::Response {
     let font = FontId::proportional(11.8);
     let fg = if primary {
@@ -596,7 +591,6 @@ fn render_body(app: &mut SnipPopupApp, ui: &mut egui::Ui, ctx: &egui::Context) -
 
                 let outer = ui.vertical(|ui| {
                     ui.horizontal(|ui| {
-                        // Semantic colored status pill with glowing indicator dot
                         Frame::new()
                             .fill(badge_fill)
                             .stroke(Stroke::new(1.0, badge_stroke))
@@ -1092,7 +1086,6 @@ fn render_footer(app: &mut SnipPopupApp, ui: &mut egui::Ui, ctx: &egui::Context)
     }
 }
 
-/// Optical-blue tinted capsule CTA for Smart Format with a crisp 4-point sparkle mark.
 fn smart_format_pill_button(ui: &mut egui::Ui) -> egui::Response {
     let font = FontId::proportional(11.6);
     let galley = ui
@@ -1220,7 +1213,6 @@ mod tests {
         let (mut app, _rt) = test_popup_with_error(&ctx);
         let screen = Rect::from_min_size(Pos2::ZERO, Vec2::new(432.0, 176.0));
 
-        // Initial layout pass
         let init = egui::RawInput {
             screen_rect: Some(screen),
             ..Default::default()
@@ -1228,12 +1220,10 @@ mod tests {
         run_frame(&ctx, &mut app, init);
         assert!(!app.pinned);
 
-        // Pin button sits immediately left of Close button in right-to-left header (width 432, margin 14, close 22, gap 6)
         let pin_pos = Pos2::new(432.0 - 14.0 - 22.0 - 6.0 - 20.0, HEADER_HEIGHT * 0.5);
         simulate_click(&ctx, &mut app, pin_pos);
         assert!(app.pinned, "Pin button click must toggle pinned=true");
 
-        // Click Close (×) button at top-right (center ~ 432 - 14 - 11 = 407)
         let close_pos = Pos2::new(432.0 - 14.0 - 11.0, HEADER_HEIGHT * 0.5);
         simulate_click(&ctx, &mut app, close_pos);
         assert!(
@@ -1276,7 +1266,6 @@ mod tests {
             _ => panic!("expected Ocr content"),
         }
 
-        // Render modified state (with Reset link) and then reset back to raw OCR
         run_frame(
             &ctx,
             &mut app,

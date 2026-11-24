@@ -223,7 +223,6 @@ impl PinManager {
         }
     }
 
-    /// Processes pin close requests and returns any queued user commands from deferred pin windows.
     pub fn drain_pending_events(&mut self, ctx: &egui::Context) -> Vec<PinCommandEvent> {
         let mut close_all_requested = false;
         let mut close_ids = Vec::new();
@@ -291,7 +290,6 @@ impl PinManager {
                     return;
                 }
 
-                // Keyboard shortcuts when this pin viewport has focus
                 let (esc, ctrl_c, ctrl_s, key_o, key_t, key_zero, scroll_y, shift) =
                     vp_ctx.input(|i| {
                         let ctrl = i.modifiers.matches_logically(Modifiers::CTRL);
@@ -357,7 +355,6 @@ impl PinManager {
                             StrokeKind::Inside,
                         );
 
-                        // Hover close button in top-right corner (crisp vector cross)
                         let close_btn_rect = Rect::from_min_size(
                             Pos2::new(rect.right() - 26.0, rect.top() + 6.0),
                             Vec2::splat(20.0),
@@ -414,7 +411,6 @@ impl PinManager {
                             }
                         }
 
-                        // Zoom / opacity HUD badge
                         if let Some((ref label, expires)) = pin.hud_notice {
                             if Instant::now() < expires {
                                 let font = FontId::monospace(11.5);

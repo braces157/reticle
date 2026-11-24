@@ -16,7 +16,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 const POPUP_HEIGHT_MIN_RESULT: f32 = 136.0;
 
-/// Applies Windows 11 native DWM rounded corners, dark shadow, and clean neutral border.
 pub fn apply_popup_dwm_styling() -> bool {
     // SAFETY: Finds our own top-level viewport window and sets standard Windows 11 DWM attributes.
     unsafe {
@@ -37,7 +36,6 @@ pub fn apply_popup_dwm_styling() -> bool {
                 (&raw const dark_mode).cast(),
                 std::mem::size_of_val(&dark_mode) as u32,
             );
-            // Razor-thin matte obsidian rim RGB(42, 42, 42) -> COLORREF 0x002A2A2A
             let border_color: u32 = 0x002A2A2A;
             let _ = DwmSetWindowAttribute(
                 hwnd,
@@ -145,11 +143,9 @@ pub fn compute_popup_pos_in_monitor(
         } else if left_x >= mon_l + margin {
             (left_x, ry)
         } else {
-            // Very wide snip: keep beside the right edge at the snip's vertical level.
             (max_x, ry)
         }
     } else {
-        // Standalone system toast (no snip anchor): top-right/bottom-right primary corner.
         (mon_r - POPUP_WIDTH - 20.0, mon_b - height - 62.0)
     };
 
@@ -228,7 +224,6 @@ mod tests {
             width: 1646,
             height: 1029,
         };
-        // Matches user's screenshot: center-right snip (x=560..1350) leaving only ~296px on right
         let snip = ScreenRect {
             x: 560,
             y: 280,

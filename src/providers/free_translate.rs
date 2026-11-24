@@ -292,7 +292,6 @@ pub fn parse_google_translate_response(raw: &str) -> Result<(String, Option<Stri
     Ok((translated.trim().to_string(), detected_lang))
 }
 
-/// Parses `api.mymemory.translated.net/get` JSON payload.
 pub fn parse_mymemory_response(raw: &str) -> Result<(String, Option<String>), String> {
     let root: Value =
         serde_json::from_str(raw).map_err(|e| format!("invalid JSON from MyMemory: {e}"))?;

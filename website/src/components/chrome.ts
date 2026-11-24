@@ -37,7 +37,6 @@ function fallbackCopy(text: string, cb: () => void): void {
   try {
     document.execCommand('copy');
   } catch {
-    // Ignore clipboard fallback errors.
   }
   document.body.removeChild(ta);
   cb();
@@ -171,11 +170,6 @@ function initModals(): void {
   });
 }
 
-/**
- * 2D Spring-physics sliding pill indicator for all `.seg-track` segmented controls.
- * Tracks x, y, width, and height via ResizeObserver + post-layout RAF so dynamic
- * sibling reflows or narrow-screen wraps can never desync the active pill.
- */
 function initSpringSegTracks(): void {
   const reduced = prefersReducedMotion();
 
@@ -266,7 +260,6 @@ function initSpringSegTracks(): void {
       });
     });
 
-    // External sync hook (e.g. when dragging on playground selects a preset programmatically)
     track.addEventListener('seg-select', (e) => {
       const btn = (e as CustomEvent<HTMLButtonElement>).detail;
       if (btn && btns.includes(btn)) {

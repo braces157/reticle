@@ -318,7 +318,6 @@ pub fn score_ocr_text(text: &str) -> usize {
     if genuine_cjk && !latin_dominant {
         score += (cjk_alpha as isize) * 6;
     } else if genuine_cjk {
-        // Mixed Latin + real CJK (e.g. bilingual media card or docs)
         score += (cjk_alpha as isize) * 5;
     } else if latin_dominant {
         // Isolated stray CJK glyphs (like `还`, `的`) inside English/code are hallucinations.
@@ -332,7 +331,6 @@ pub fn score_ocr_text(text: &str) -> usize {
         score -= (fullwidth_punct as isize) * 12;
     }
 
-    // Reward clean multi-character ASCII words and penalize single-letter fragmentation (`e a c h`).
     let mut single_ascii_run = 0usize;
     for tok in text.split_whitespace() {
         let len = tok.chars().count();
@@ -392,7 +390,6 @@ fn dark_syntax_luma(r: u8, g: u8, b: u8) -> u8 {
     ((l + m) / 2) as u8
 }
 
-/// Computes Otsu's optimal binary threshold for grayscale luminance values.
 fn otsu_threshold(hist: &[u32; 256], total: u64) -> u8 {
     if total == 0 {
         return 128;
@@ -527,7 +524,6 @@ fn preprocess_for_ocr(src: &RgbaImage, mode: ContrastMode, max_dim: u32) -> Rgba
                     rgb_luma(px[0], px[1], px[2])
                 };
                 let v = if invert { 255 - l } else { l };
-                // Soft binarization keeps anti-aliased edge smoothness while crushing low-contrast gray
                 let out_v = if v < threshold { 0 } else { 255 };
                 out.put_pixel(x + pad, y + pad, Rgba([out_v, out_v, out_v, 255]));
             }
@@ -542,10 +538,10 @@ fn rgba_to_software_bitmap(img: &RgbaImage) -> Result<SoftwareBitmap, OcrError> 
     let height = img.height() as i32;
     let mut bgra = Vec::with_capacity((width as usize) * (height as usize) * 4);
     for px in img.as_raw().as_chunks::<4>().0 {
-        bgra.push(px[2]); // B
-        bgra.push(px[1]); // G
-        bgra.push(px[0]); // R
-        bgra.push(255); // A
+        bgra.push(px[2]);
+        bgra.push(px[1]);
+        bgra.push(px[0]);
+        bgra.push(255);
     }
 
     let writer =
@@ -913,7 +909,6 @@ pub(crate) mod tests {
             // Skip CJK-specific glyph assertions on en-US-only CI runners without Chinese OCR packs.
             return;
         }
-        // Reproduces Spotify dark mode (#121212 background, #B8B8B8 14px Microsoft YaHei Chinese text)
         let dark_zh_png = render_styled_png(
             "我叫长安，你叫故里",
             220,
@@ -931,7 +926,6 @@ pub(crate) mod tests {
             "expected Windows.Media.Ocr (zh-Hans-CN) to detect small dark-mode Chinese text, got: {extracted:?}"
         );
 
-        // Also reproduces faint 12px dim gray (#787878) 4-char Chinese credits ("欧阳尚尚") on #181818
         let faint_zh_png = render_styled_png(
             "欧阳尚尚",
             92,

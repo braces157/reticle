@@ -152,7 +152,6 @@ impl PrefetchManager {
             return None;
         }
 
-        // Selection changed while an old speculative session was running -> abort old immediately.
         if self.active.is_some() {
             self.cancel_all();
         }
@@ -173,7 +172,6 @@ impl PrefetchManager {
         }
     }
 
-    /// Cancels all in-flight speculative tasks and clears the active cache.
     pub fn cancel_all(&mut self) {
         self.pending_selection = None;
         if let Some(mut session) = self.active.take() {
@@ -219,7 +217,6 @@ impl PrefetchManager {
         let crop_arc = Arc::new(crop);
         let mut tasks = Vec::new();
 
-        // 1. Always pre-run local direct-RGBA OCR (offline, free, fast).
         tasks.push(spawn_ocr_task(
             Arc::clone(&crop_arc),
             Arc::clone(&state),
@@ -227,7 +224,6 @@ impl PrefetchManager {
             tokio_handle,
         ));
 
-        // 2. Speculative AI prefetch (Translate + Explain) when enabled.
         if config.speculative_prefetch {
             let translate_handle = spawn_action_task(
                 Arc::clone(&crop_arc),
@@ -317,7 +313,6 @@ impl PrefetchManager {
             target_language: target_language.clone(),
         };
 
-        // Check if we already have an active session for this exact crop + target language.
         let matches_active = self.active.as_ref().is_some_and(|s| s.key == key);
         if matches_active {
             let session = self.active.as_ref().expect("checked");
@@ -325,7 +320,6 @@ impl PrefetchManager {
                 match guard.actions.get_mut(&action) {
                     Some(ActionSlot::Ready(Ok(output))) => {
                         let mut out = output.clone();
-                        // Attach local OCR text if OCR finished after the AI stream did.
                         if out.original_text.is_none()
                             && let Some(OcrSlot::Ready(Ok(ref ocr_text))) = guard.ocr
                         {
@@ -357,7 +351,6 @@ impl PrefetchManager {
                 }
             }
 
-            // Reuse existing session's OCR & vision JPEG and spawn a fresh live streaming task.
             let session = self.active.as_mut().expect("checked");
             let state = Arc::clone(&session.state);
             let subscriber = ActionSubscriber {
@@ -556,7 +549,6 @@ fn spawn_action_task(
                 (inp, None)
             }
             ProviderKind::Byok(_) => {
-                // Encode compact vision JPEG once and share across Translate + Explain.
                 let cached_jpeg = state
                     .lock()
                     .ok()
@@ -698,11 +690,9 @@ mod tests {
             height: 120,
         };
 
-        // First frame starts debounce timer
         let wait1 = mgr.observe_overlay_selection(Some((r1, 0)), "en", t0);
         assert_eq!(wait1, Some(SETTLE_DEBOUNCE));
 
-        // Mid-debounce returns remaining duration
         let wait2 = mgr.observe_overlay_selection(
             Some((r1, 0)),
             "en",
@@ -710,7 +700,6 @@ mod tests {
         );
         assert_eq!(wait2, Some(Duration::from_millis(70)));
 
-        // After debounce elapses -> returns Duration::ZERO (ready to fire)
         let wait3 = mgr.observe_overlay_selection(
             Some((r1, 0)),
             "en",
@@ -718,7 +707,6 @@ mod tests {
         );
         assert_eq!(wait3, Some(Duration::ZERO));
 
-        // Annotation revision bump resets timer cleanly
         let wait4 = mgr.observe_overlay_selection(
             Some((r1, 1)),
             "en",
@@ -726,7 +714,6 @@ mod tests {
         );
         assert_eq!(wait4, Some(SETTLE_DEBOUNCE));
 
-        // Clearing selection resets pending state
         assert_eq!(
             mgr.observe_overlay_selection(None, "en", t0 + Duration::from_secs(1)),
             None
@@ -786,7 +773,6 @@ mod tests {
             "expected OCR text, got: {text:?}"
         );
 
-        // Second lookup is guaranteed 0ms Ready
         let (tx2, _rx2) = std::sync::mpsc::channel();
         let slot2 = Arc::new(std::sync::OnceLock::new());
         assert!(matches!(

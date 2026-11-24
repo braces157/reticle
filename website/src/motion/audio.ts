@@ -30,7 +30,6 @@ class SoundEngine {
       const now = this.ctx.currentTime;
 
       if (kind === 'shutter') {
-        // Tactile 2-stage mechanical Leica shutter click (transient noise burst + damped body thock)
         const bufferSize = Math.floor(this.ctx.sampleRate * 0.032);
         const noiseBuf = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
         const data = noiseBuf.getChannelData(0);
@@ -66,7 +65,6 @@ class SoundEngine {
       }
 
       if (kind === 'pin') {
-        // Subtle crisp harmonic dual-tone chime
         [880, 1318.5].forEach((freq, idx) => {
           if (!this.ctx) return;
           const osc = this.ctx.createOscillator();

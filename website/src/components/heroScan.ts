@@ -7,10 +7,6 @@ import {
 } from '../motion/spring';
 import { copyText } from './chrome';
 
-/**
- * Spring-driven dual-layer optical X-Ray headline ("anything.").
- * Uses frame-rate-independent dt + IntersectionObserver pause when scrolled offscreen.
- */
 export function initHeroScan(): void {
   const marquee = document.getElementById('hero-ocr-word');
   const statusEl = document.getElementById('hero-word-status');

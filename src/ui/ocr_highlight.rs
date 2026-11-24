@@ -3,16 +3,15 @@ use crate::ui::theme;
 use egui::text::{LayoutJob, TextFormat};
 use egui::{Color32, FontId};
 
-// Matte-obsidian editorial syntax palette (tuned for `#121212` card surface)
-const SYN_KEYWORD: Color32 = Color32::from_rgb(196, 181, 253); // Soft violet-lavender
-const SYN_STRING: Color32 = Color32::from_rgb(110, 231, 183); // Emerald mint
-const SYN_KEY: Color32 = Color32::from_rgb(125, 211, 252); // Optical sky blue
-const SYN_TYPE: Color32 = Color32::from_rgb(103, 232, 249); // Crisp cyan
-const SYN_NUMBER: Color32 = Color32::from_rgb(252, 211, 77); // Warm amber
-const SYN_COMMENT: Color32 = Color32::from_rgb(110, 115, 130); // Quiet slate
-const SYN_PUNCT: Color32 = Color32::from_rgb(142, 149, 166); // Cool silver
-const SYN_BODY: Color32 = Color32::from_rgb(234, 236, 239); // Crisp readable off-white
-const SYN_HEADING: Color32 = Color32::from_rgb(255, 255, 255); // Pure white emphasis
+const SYN_KEYWORD: Color32 = Color32::from_rgb(196, 181, 253);
+const SYN_STRING: Color32 = Color32::from_rgb(110, 231, 183);
+const SYN_KEY: Color32 = Color32::from_rgb(125, 211, 252);
+const SYN_TYPE: Color32 = Color32::from_rgb(103, 232, 249);
+const SYN_NUMBER: Color32 = Color32::from_rgb(252, 211, 77);
+const SYN_COMMENT: Color32 = Color32::from_rgb(110, 115, 130);
+const SYN_PUNCT: Color32 = Color32::from_rgb(142, 149, 166);
+const SYN_BODY: Color32 = Color32::from_rgb(234, 236, 239);
+const SYN_HEADING: Color32 = Color32::from_rgb(255, 255, 255);
 
 /// Semantic pill colors `(fill, stroke, text, dot)` for each smart-format mode.
 pub fn format_badge_palette(kind: Option<SmartFormatKind>) -> (Color32, Color32, Color32, Color32) {
@@ -44,8 +43,6 @@ pub fn format_badge_palette(kind: Option<SmartFormatKind>) -> (Color32, Color32,
     }
 }
 
-/// Builds a rich, live syntax-colored `LayoutJob` for `egui::TextEdit::multiline`
-/// tailored to the detected `SmartFormatKind`.
 pub fn build_ocr_layout_job(
     text: &str,
     wrap_width: f32,
@@ -160,7 +157,6 @@ fn highlight_code_line(job: &mut LayoutJob, line: &str, font: &FontId) {
     let mut i = 0;
 
     while i < len {
-        // Line comment (`//` or leading `#` that isn't Rust `#[`)
         if (bytes[i] == b'/' && i + 1 < len && bytes[i + 1] == b'/')
             || (bytes[i] == b'#' && bytes.get(i + 1) != Some(&b'['))
         {
@@ -168,7 +164,6 @@ fn highlight_code_line(job: &mut LayoutJob, line: &str, font: &FontId) {
             return;
         }
 
-        // Quoted string literal (or JSON key if followed by `:`)
         if matches!(bytes[i], b'"' | b'\'' | b'`') {
             let quote = bytes[i];
             let start = i;
@@ -194,7 +189,6 @@ fn highlight_code_line(job: &mut LayoutJob, line: &str, font: &FontId) {
             continue;
         }
 
-        // Number literal
         if bytes[i].is_ascii_digit() {
             let start = i;
             i += 1;
@@ -207,7 +201,6 @@ fn highlight_code_line(job: &mut LayoutJob, line: &str, font: &FontId) {
             continue;
         }
 
-        // Identifier / keyword / PascalCase type
         if bytes[i].is_ascii_alphabetic() || bytes[i] == b'_' {
             let start = i;
             i += 1;
@@ -228,7 +221,6 @@ fn highlight_code_line(job: &mut LayoutJob, line: &str, font: &FontId) {
             continue;
         }
 
-        // Punctuation & operators
         if bytes[i].is_ascii_punctuation() {
             let start = i;
             i += 1;
@@ -242,7 +234,6 @@ fn highlight_code_line(job: &mut LayoutJob, line: &str, font: &FontId) {
             continue;
         }
 
-        // Whitespace or UTF-8 characters
         let ch = line[i..].chars().next().unwrap();
         let next = i + ch.len_utf8();
         push_span(job, &line[i..next], font, SYN_BODY);
@@ -312,7 +303,6 @@ fn highlight_prose(job: &mut LayoutJob, text: &str, font: FontId) {
     }
 }
 
-/// Subtly highlights inline URLs and backtick spans inside prose/list/table values.
 fn highlight_inline_accents(job: &mut LayoutJob, text: &str, font: &FontId, base: Color32) {
     let mut rest = text;
     while !rest.is_empty() {

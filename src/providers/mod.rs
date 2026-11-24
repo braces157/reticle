@@ -98,7 +98,6 @@ pub trait SnipProvider: Send + Sync {
     }
 }
 
-/// Determines which provider should handle a snip based on user config and requested action.
 pub fn resolve_provider_kind(config: &AppConfig, action: SnipAction) -> ProviderKind {
     if !config.has_byok_key() {
         return ProviderKind::Free;

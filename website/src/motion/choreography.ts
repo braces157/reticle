@@ -67,7 +67,6 @@ function initMagneticButtons(): void {
 }
 
 function initHeroEntrance(): void {
-  // Disciplined tight stagger (60ms) — never sluggish, never blocks clicks
   gsap.from('.hero-blur-in', {
     y: 18,
     opacity: 0,
@@ -104,10 +103,6 @@ function initHeroEntrance(): void {
   });
 }
 
-/**
- * Rauno Freiberg-style subtle tactile depth: gentle spring-damped ±1.1deg Y-tilt
- * when moving across the hero frame header (auto-flattens to 0 while actively snipping).
- */
 function initHeroMicroParallax(): void {
   const wrap = document.getElementById('playground');
   const display = document.getElementById('hero-display-3d');
