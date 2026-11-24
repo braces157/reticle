@@ -1,9 +1,10 @@
-use crate::capture::{capture_virtual_screen, CapturedRegion, CroppedImage, ScreenRect};
+use crate::capture::{capture_virtual_screen, CroppedImage, ScreenRect};
 use crate::clipboard;
 use crate::config::{self, AppConfig};
 use crate::pin::PinManager;
+use crate::prefetch::{ActionAttach, OcrAttach, PrefetchManager};
 use crate::providers::{
-    build_http_client, select_provider, SnipAction, SnipError, SnipInput, SnipOutput,
+    build_http_client, select_provider, SnipAction, SnipError, SnipOutput,
 };
 use crate::snip::save;
 use crate::snip::{
@@ -15,7 +16,7 @@ use crate::ui::popup_view;
 use crate::ui::theme;
 use crate::ui::tray::TrayController;
 use crate::ui::window;
-use crate::ui::{wake_ui, EguiContextSlot, UiEvent};
+use crate::ui::{EguiContextSlot, UiEvent};
 use egui::{Key, Modifiers, Pos2, Vec2, ViewportCommand};
 use egui_commonmark::CommonMarkCache;
 use std::path::PathBuf;
@@ -40,6 +41,7 @@ pub(crate) enum PopupContent {
     },
     Result {
         output: SnipOutput,
+        is_streaming: bool,
     },
     Ocr {
         text: String,
@@ -68,6 +70,7 @@ pub struct SnipPopupApp {
 
     snip_overlay: Option<SnipOverlaySession>,
     pins: PinManager,
+    prefetch: PrefetchManager,
     overlay_vp_registered: bool,
     pending_capture: Option<(SnipMode, Instant)>,
     visible: bool,
@@ -83,7 +86,7 @@ pub struct SnipPopupApp {
     pub(crate) request_id: u64,
     ocr_copy_request_id: u64,
     pub(crate) active_action: SnipAction,
-    pub(crate) last_region: Option<CapturedRegion>,
+    pub(crate) last_crop: Option<(CroppedImage, u64)>,
     pub(crate) content: PopupContent,
     pub(crate) md_cache: CommonMarkCache,
 }
@@ -161,6 +164,7 @@ impl SnipPopupApp {
             tray_controller,
             snip_overlay: None,
             pins: PinManager::default(),
+            prefetch: PrefetchManager::new(),
             overlay_vp_registered: false,
             pending_capture: None,
             visible: false,
@@ -175,7 +179,7 @@ impl SnipPopupApp {
             request_id: 0,
             ocr_copy_request_id: 0,
             active_action: SnipAction::Translate,
-            last_region: None,
+            last_crop: None,
             content: PopupContent::Hidden,
             md_cache: CommonMarkCache::default(),
         }
@@ -191,6 +195,7 @@ impl SnipPopupApp {
         self.visible = false;
         self.was_focused = false;
         self.content = PopupContent::Hidden;
+        self.prefetch.cancel_all();
         ctx.send_viewport_cmd(ViewportCommand::Visible(false));
     }
 
@@ -223,7 +228,7 @@ impl SnipPopupApp {
 
     pub(crate) fn toggle_ocr_expanded(&mut self, ctx: &egui::Context) {
         self.ocr_expanded = !self.ocr_expanded;
-        if let PopupContent::Result { ref output } = self.content {
+        if let PopupContent::Result { ref output, .. } = self.content {
             let new_h = window::estimate_result_height(output, self.ocr_expanded);
             ctx.send_viewport_cmd(ViewportCommand::InnerSize(Vec2::new(POPUP_WIDTH, new_h)));
             ctx.request_repaint();
@@ -283,6 +288,7 @@ impl SnipPopupApp {
     }
 
     fn start_snip_overlay_now(&mut self, ctx: &egui::Context, mode: SnipMode) {
+        self.prefetch.cancel_all();
         if let Ok(latest) = config::load_or_create_at(&self.config_path) {
             self.config = latest;
         }
@@ -338,10 +344,51 @@ impl SnipPopupApp {
     }
 
     fn handle_overlay_result(&mut self, ctx: &egui::Context, result: SnipOverlayResult) {
-        let SnipOverlayResult::Completed { cropped, command } = result else {
-            return;
-        };
-        self.execute_cropped_command(ctx, cropped, command);
+        match result {
+            SnipOverlayResult::Cancelled => {
+                self.prefetch.cancel_all();
+            }
+            SnipOverlayResult::Completed {
+                cropped,
+                command,
+                doc_revision,
+            } => {
+                self.execute_cropped_command(ctx, cropped, command, doc_revision);
+            }
+        }
+    }
+
+    fn present_ocr_result(
+        &mut self,
+        ctx: &egui::Context,
+        screen_rect: ScreenRect,
+        result: Result<String, String>,
+    ) {
+        let anchor = Some(screen_rect);
+        match result {
+            Ok(text) => {
+                let trimmed = text.trim();
+                if trimmed.is_empty() {
+                    self.show_toast(
+                        ctx,
+                        "No Text Detected",
+                        "Try selecting a larger or higher-contrast region.",
+                        false,
+                        anchor,
+                    );
+                } else {
+                    Self::copy_to_clipboard(ctx, trimmed);
+                    self.copied_at = Some(Instant::now());
+                    let height = window::estimate_ocr_height(trimmed);
+                    self.content = PopupContent::Ocr {
+                        text: trimmed.to_string(),
+                    };
+                    let pos = self.compute_popup_pos(ctx, anchor, height);
+                    self.show_popup_at(ctx, pos, Vec2::new(POPUP_WIDTH, height));
+                }
+            }
+            Err(err) => self.show_toast(ctx, "OCR Failed", err, true, anchor),
+        }
     }
 
     fn execute_cropped_command(
@@ -349,10 +396,32 @@ impl SnipPopupApp {
         ctx: &egui::Context,
         cropped: CroppedImage,
         command: SnipCommand,
+        doc_revision: u64,
     ) {
         if command == SnipCommand::OcrCopy {
             self.ocr_copy_request_id = self.ocr_copy_request_id.wrapping_add(1);
+            let screen_rect = cropped.screen_rect;
+            self.last_crop = Some((cropped.clone(), doc_revision));
+            match self.prefetch.attach_or_take_ocr(
+                screen_rect,
+                doc_revision,
+                self.ocr_copy_request_id,
+                self.ui_tx.clone(),
+                Arc::clone(&self.egui_slot),
+            ) {
+                OcrAttach::Ready(result) => {
+                    self.present_ocr_result(ctx, screen_rect, result);
+                    return;
+                }
+                OcrAttach::AttachedRunning => {
+                    return;
+                }
+                OcrAttach::Miss => {}
+            }
+        } else if !matches!(command, SnipCommand::Translate | SnipCommand::ExplainCode) {
+            self.prefetch.cancel_all();
         }
+
         match execute_snip_command(
             cropped,
             command,
@@ -371,8 +440,8 @@ impl SnipPopupApp {
                 message,
                 is_warning,
             } => self.show_toast(ctx, title, message, is_warning, None),
-            ActionOutcome::ProcessRegion { region, action } => {
-                self.last_region = Some(region);
+            ActionOutcome::ProcessCrop { crop, action } => {
+                self.last_crop = Some((crop, doc_revision));
                 self.copied_at = None;
                 self.ocr_copied_at = None;
                 self.ocr_expanded = false;
@@ -396,6 +465,30 @@ impl SnipPopupApp {
                 self.snip_overlay = None;
                 hide_overlay_viewport(ctx);
                 self.handle_overlay_result(ctx, result);
+            } else if let Some(ref overlay) = self.snip_overlay {
+                // Speculatively pre-run local OCR (+ AI Translate/Explain when enabled) once
+                // the selection settles so clicking any toolbar action is instant or live-streaming.
+                let settled = overlay.settled_selection();
+                let target_lang = self.config.normalized_target_language();
+                if let Some(wait) = self.prefetch.observe_overlay_selection(
+                    settled,
+                    &target_lang,
+                    Instant::now(),
+                ) {
+                    if wait.is_zero() {
+                        if let Some((crop, rev)) = overlay.render_settled_crop() {
+                            self.prefetch.start_speculative(
+                                crop,
+                                rev,
+                                &self.config,
+                                &self.http,
+                                &self.tokio_handle,
+                            );
+                        }
+                    } else {
+                        ctx.request_repaint_after(wait);
+                    }
+                }
             }
         } else {
             ctx.show_viewport_immediate(
@@ -414,7 +507,7 @@ impl SnipPopupApp {
         if let Err(err) = self.config.save_to(&self.config_path) {
             log::warn!("Failed to persist updated target_language: {err}");
         }
-        if self.last_region.is_some() {
+        if self.last_crop.is_some() {
             self.dispatch_processing(ctx, self.active_action, false);
         }
     }
@@ -425,7 +518,7 @@ impl SnipPopupApp {
         action: SnipAction,
         reposition: bool,
     ) {
-        let Some(region) = self.last_region.clone() else {
+        let Some((crop, doc_revision)) = self.last_crop.clone() else {
             return;
         };
 
@@ -433,43 +526,88 @@ impl SnipPopupApp {
         let req_id = self.request_id;
         self.active_action = action;
 
-        let provider = select_provider(&self.config, action, self.http.clone());
-        let provider_hint = provider.name().to_string();
-        let target_language = self.config.normalized_target_language();
+        let anchor = Some(crop.screen_rect);
+        let provider_hint = select_provider(&self.config, action, self.http.clone())
+            .name()
+            .to_string();
 
-        self.content = PopupContent::Loading {
+        match self.prefetch.dispatch_or_attach_action(
+            crop,
+            doc_revision,
             action,
-            provider_hint,
-        };
-
-        if reposition || !self.visible {
-            let pos = self.compute_popup_pos(ctx, Some(region.screen_rect), POPUP_HEIGHT_LOADING);
-            self.show_popup_at(ctx, pos, Vec2::new(POPUP_WIDTH, POPUP_HEIGHT_LOADING));
-        } else {
-            ctx.send_viewport_cmd(ViewportCommand::InnerSize(Vec2::new(
-                POPUP_WIDTH,
-                POPUP_HEIGHT_LOADING,
-            )));
-            ctx.request_repaint();
+            &self.config,
+            &self.http,
+            &self.tokio_handle,
+            req_id,
+            self.ui_tx.clone(),
+            Arc::clone(&self.egui_slot),
+        ) {
+            ActionAttach::Ready(output) => {
+                // 0ms instant hit from speculative prefetch or per-region cache!
+                self.ocr_expanded = output.primary_text.is_empty();
+                let height = window::estimate_result_height(&output, self.ocr_expanded);
+                self.content = PopupContent::Result {
+                    output,
+                    is_streaming: false,
+                };
+                if reposition || !self.visible {
+                    let pos = self.compute_popup_pos(ctx, anchor, height);
+                    self.show_popup_at(ctx, pos, Vec2::new(POPUP_WIDTH, height));
+                } else {
+                    self.current_height = height;
+                    ctx.send_viewport_cmd(ViewportCommand::InnerSize(Vec2::new(
+                        POPUP_WIDTH,
+                        height,
+                    )));
+                    ctx.request_repaint();
+                }
+            }
+            ActionAttach::AttachedStreaming {
+                provider_label,
+                text_so_far,
+            } if !text_so_far.is_empty() => {
+                let output = SnipOutput {
+                    primary_text: text_so_far,
+                    original_text: None,
+                    detected_language: None,
+                    provider_label,
+                    warning: None,
+                    is_markdown: action == SnipAction::ExplainCode,
+                };
+                let height = window::estimate_result_height(&output, false);
+                self.content = PopupContent::Result {
+                    output,
+                    is_streaming: true,
+                };
+                if reposition || !self.visible {
+                    let pos = self.compute_popup_pos(ctx, anchor, height);
+                    self.show_popup_at(ctx, pos, Vec2::new(POPUP_WIDTH, height));
+                } else {
+                    self.current_height = height;
+                    ctx.send_viewport_cmd(ViewportCommand::InnerSize(Vec2::new(
+                        POPUP_WIDTH,
+                        height,
+                    )));
+                    ctx.request_repaint();
+                }
+            }
+            ActionAttach::AttachedStreaming { .. } | ActionAttach::Miss => {
+                self.content = PopupContent::Loading {
+                    action,
+                    provider_hint,
+                };
+                if reposition || !self.visible {
+                    let pos = self.compute_popup_pos(ctx, anchor, POPUP_HEIGHT_LOADING);
+                    self.show_popup_at(ctx, pos, Vec2::new(POPUP_WIDTH, POPUP_HEIGHT_LOADING));
+                } else {
+                    ctx.send_viewport_cmd(ViewportCommand::InnerSize(Vec2::new(
+                        POPUP_WIDTH,
+                        POPUP_HEIGHT_LOADING,
+                    )));
+                    ctx.request_repaint();
+                }
+            }
         }
-
-        let input = SnipInput {
-            png_bytes: region.png_bytes,
-            action,
-            target_language,
-        };
-        let ui_tx = self.ui_tx.clone();
-        let egui_slot = Arc::clone(&self.egui_slot);
-
-        self.tokio_handle.spawn(async move {
-            let result = provider.process(input).await;
-            let _ = ui_tx.send(UiEvent::ProcessingFinished {
-                request_id: req_id,
-                action,
-                result,
-            });
-            wake_ui(&egui_slot);
-        });
     }
 
     fn process_events(&mut self, ctx: &egui::Context) {
@@ -478,38 +616,46 @@ impl SnipPopupApp {
                 UiEvent::TriggerSnip(mode) => self.request_snip(ctx, mode),
                 UiEvent::OcrCopyFinished {
                     request_id,
-                    region,
+                    screen_rect,
                     result,
                 } => {
                     if request_id != self.ocr_copy_request_id {
                         continue;
                     }
-                    let anchor = Some(region.screen_rect);
-                    self.last_region = Some(region);
-                    match result {
-                        Ok(text) => {
-                            let trimmed = text.trim();
-                            if trimmed.is_empty() {
-                                self.show_toast(
-                                    ctx,
-                                    "No Text Detected",
-                                    "Try selecting a larger or higher-contrast region.",
-                                    false,
-                                    anchor,
-                                );
-                            } else {
-                                Self::copy_to_clipboard(ctx, trimmed);
-                                self.copied_at = Some(Instant::now());
-                                let height = window::estimate_ocr_height(trimmed);
-                                self.content = PopupContent::Ocr {
-                                    text: trimmed.to_string(),
-                                };
-                                let pos = self.compute_popup_pos(ctx, anchor, height);
-                                self.show_popup_at(ctx, pos, Vec2::new(POPUP_WIDTH, height));
-                            }
-                        }
-                        Err(err) => self.show_toast(ctx, "OCR Failed", err, true, anchor),
+                    self.present_ocr_result(ctx, screen_rect, result);
+                }
+                UiEvent::ProcessingDelta {
+                    request_id,
+                    action,
+                    provider_label,
+                    text,
+                } => {
+                    if request_id != self.request_id {
+                        continue;
                     }
+                    self.active_action = action;
+                    let anchor = self.last_crop.as_ref().map(|(c, _)| c.screen_rect);
+                    let output = SnipOutput {
+                        primary_text: text,
+                        original_text: None,
+                        detected_language: None,
+                        provider_label,
+                        warning: None,
+                        is_markdown: action == SnipAction::ExplainCode,
+                    };
+                    let was_loading = matches!(self.content, PopupContent::Loading { .. });
+                    let est_h = window::estimate_result_height(&output, false);
+                    self.content = PopupContent::Result {
+                        output,
+                        is_streaming: true,
+                    };
+                    if !self.visible {
+                        let pos = self.compute_popup_pos(ctx, anchor, est_h);
+                        self.show_popup_at(ctx, pos, Vec2::new(POPUP_WIDTH, est_h));
+                    } else if was_loading {
+                        self.sync_measured_height(ctx, est_h);
+                    }
+                    ctx.request_repaint();
                 }
                 UiEvent::ProcessingFinished {
                     request_id,
@@ -520,14 +666,23 @@ impl SnipPopupApp {
                         continue;
                     }
                     self.active_action = action;
-                    let anchor = self.last_region.as_ref().map(|r| r.screen_rect);
+                    let anchor = self.last_crop.as_ref().map(|(c, _)| c.screen_rect);
                     match result {
                         Ok(output) => {
                             self.ocr_expanded = output.primary_text.is_empty();
                             let height = window::estimate_result_height(&output, self.ocr_expanded);
-                            self.content = PopupContent::Result { output };
-                            let pos = self.compute_popup_pos(ctx, anchor, height);
-                            self.show_popup_at(ctx, pos, Vec2::new(POPUP_WIDTH, height));
+                            let already_visible = self.visible;
+                            self.content = PopupContent::Result {
+                                output,
+                                is_streaming: false,
+                            };
+                            if already_visible {
+                                self.sync_measured_height(ctx, height);
+                                ctx.request_repaint();
+                            } else {
+                                let pos = self.compute_popup_pos(ctx, anchor, height);
+                                self.show_popup_at(ctx, pos, Vec2::new(POPUP_WIDTH, height));
+                            }
                         }
                         Err(SnipError::NoTextDetected) => {
                             self.content = PopupContent::Toast {
@@ -562,6 +717,7 @@ impl SnipPopupApp {
                 }
                 UiEvent::ConfigUpdated { config, toast } => {
                     self.config = config;
+                    self.prefetch.cancel_all();
                     if let Some(msg) = toast {
                         let is_warning = msg.to_ascii_lowercase().contains("hotkey");
                         self.content = PopupContent::Toast {
@@ -627,7 +783,7 @@ impl SnipPopupApp {
 
     pub(crate) fn copy_primary_result(&mut self, ctx: &egui::Context) {
         let payload = match &self.content {
-            PopupContent::Result { output } => {
+            PopupContent::Result { output, .. } => {
                 if !output.primary_text.is_empty() {
                     Some(output.primary_text.clone())
                 } else {
@@ -661,7 +817,7 @@ impl eframe::App for SnipPopupApp {
         self.poll_pending_capture(ctx);
         let pin_events = self.pins.drain_pending_events(ctx);
         for ev in pin_events {
-            self.execute_cropped_command(ctx, ev.cropped, ev.command);
+            self.execute_cropped_command(ctx, ev.cropped, ev.command, 0);
         }
     }
 
@@ -673,7 +829,7 @@ impl eframe::App for SnipPopupApp {
 
         let pin_events = self.pins.render_all(&ctx);
         for ev in pin_events {
-            self.execute_cropped_command(&ctx, ev.cropped, ev.command);
+            self.execute_cropped_command(&ctx, ev.cropped, ev.command, 0);
         }
 
         if !self.visible {

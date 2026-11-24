@@ -1,4 +1,4 @@
-use crate::capture::{encode_rgba_to_png, CapturedRegion, CroppedImage};
+use crate::capture::{encode_rgba_to_png, CroppedImage};
 use crate::clipboard;
 use crate::config::AppConfig;
 use crate::ocr;
@@ -17,8 +17,8 @@ pub enum ActionOutcome {
         is_warning: bool,
     },
     PinImage(CroppedImage),
-    ProcessRegion {
-        region: CapturedRegion,
+    ProcessCrop {
+        crop: CroppedImage,
         action: SnipAction,
     },
 }
@@ -80,46 +80,32 @@ pub fn execute_snip_command(
                 is_warning: true,
             },
         },
-        SnipCommand::OcrCopy => match cropped.to_captured_region() {
-            Ok(region) => {
-                let tx = ui_tx.clone();
-                let slot = Arc::clone(egui_slot);
-                tokio_handle.spawn(async move {
-                    let png_for_ocr = region.png_bytes.clone();
-                    let res = tokio::task::spawn_blocking(move || {
-                        ocr::extract_text_from_png(&png_for_ocr)
-                    })
-                    .await
-                    .map_err(|e| format!("OCR task failed: {e}"))
-                    .and_then(|inner| inner.map_err(|e| e.to_string()));
-                    let _ = tx.send(UiEvent::OcrCopyFinished {
-                        request_id: ocr_request_id,
-                        region,
-                        result: res,
-                    });
-                    wake_ui(&slot);
+        SnipCommand::OcrCopy => {
+            let tx = ui_tx.clone();
+            let slot = Arc::clone(egui_slot);
+            let screen_rect = cropped.screen_rect;
+            tokio_handle.spawn(async move {
+                let res = tokio::task::spawn_blocking(move || {
+                    ocr::extract_text_from_rgba(cropped.width, cropped.height, &cropped.rgba)
+                })
+                .await
+                .map_err(|e| format!("OCR task failed: {e}"))
+                .and_then(|inner| inner.map_err(|e| e.to_string()));
+                let _ = tx.send(UiEvent::OcrCopyFinished {
+                    request_id: ocr_request_id,
+                    screen_rect,
+                    result: res,
                 });
-                ActionOutcome::None
-            }
-            Err(err) => ActionOutcome::Toast {
-                title: "OCR Error".to_string(),
-                message: err.to_string(),
-                is_warning: true,
-            },
-        },
-        SnipCommand::Translate | SnipCommand::ExplainCode => match cropped.to_captured_region() {
-            Ok(region) => ActionOutcome::ProcessRegion {
-                region,
-                action: if command == SnipCommand::ExplainCode {
-                    SnipAction::ExplainCode
-                } else {
-                    SnipAction::Translate
-                },
-            },
-            Err(err) => ActionOutcome::Toast {
-                title: "Capture Error".to_string(),
-                message: err.to_string(),
-                is_warning: true,
+                wake_ui(&slot);
+            });
+            ActionOutcome::None
+        }
+        SnipCommand::Translate | SnipCommand::ExplainCode => ActionOutcome::ProcessCrop {
+            crop: cropped,
+            action: if command == SnipCommand::ExplainCode {
+                SnipAction::ExplainCode
+            } else {
+                SnipAction::Translate
             },
         },
     }

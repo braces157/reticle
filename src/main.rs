@@ -7,6 +7,7 @@ mod hotkey;
 mod logging;
 mod ocr;
 mod pin;
+mod prefetch;
 mod providers;
 mod snip;
 mod ui;

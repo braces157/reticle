@@ -339,61 +339,92 @@ fn run_engines_best(engines: &[(String, OcrEngine)], bitmap: &SoftwareBitmap) ->
     (best_text, best_score)
 }
 
+fn run_single_ocr_pass(
+    decoded: &RgbaImage,
+    mode: ContrastMode,
+    engine_max_dim: u32,
+) -> Result<(String, usize), OcrError> {
+    let _com = ComGuard::init_mta();
+    let engines = build_candidate_engines()?;
+    let img = preprocess_for_ocr(decoded, mode, engine_max_dim);
+    let bmp = rgba_to_software_bitmap(&img)?;
+    Ok(run_engines_best(&engines, &bmp))
+}
+
+/// Extract text directly from raw RGBA pixels without any PNG encode/decode overhead.
+/// Automatically upscales small UI text, runs dark-mode inverted & standard passes in parallel,
+/// and evaluates installed Windows OCR language packs (Chinese, English, Japanese, etc.).
+pub fn extract_text_from_rgba(width: u32, height: u32, rgba: &[u8]) -> Result<String, OcrError> {
+    if width == 0 || height == 0 {
+        return Ok(String::new());
+    }
+    let img = RgbaImage::from_raw(width, height, rgba.to_vec())
+        .ok_or_else(|| OcrError::ImageDecode("invalid RGBA buffer dimensions".to_string()))?;
+    extract_text_from_rgba_image(&img)
+}
+
 /// Extract text from cropped PNG bytes using Windows built-in offline `Windows.Media.Ocr`.
 /// Automatically upscales small UI text, handles dark-mode backgrounds (Spotify/VS Code),
 /// and evaluates installed Windows OCR language packs (Chinese, English, Japanese, etc.).
 pub fn extract_text_from_png(png_bytes: &[u8]) -> Result<String, OcrError> {
-    let _com = ComGuard::init_mta();
-
     let decoded = image::load_from_memory_with_format(png_bytes, ImageFormat::Png)
         .map_err(|e| OcrError::ImageDecode(e.to_string()))?
         .to_rgba8();
+    extract_text_from_rgba_image(&decoded)
+}
+
+fn extract_text_from_rgba_image(decoded: &RgbaImage) -> Result<String, OcrError> {
+    let _com = ComGuard::init_mta();
 
     if decoded.width() == 0 || decoded.height() == 0 {
         return Ok(String::new());
     }
 
-    let engines = build_candidate_engines()?;
     let engine_max_dim = OcrEngine::MaxImageDimension()
         .ok()
         .filter(|&d| d >= 512)
         .unwrap_or(MAX_OCR_DIM)
         .min(MAX_OCR_DIM);
-    let is_dark_bg = average_luma(&decoded) < 126.0;
+    let is_dark_bg = average_luma(decoded) < 126.0;
 
-    // Pass 1: Upscaled + padded (with percentile-stretched dark inversion when dark background)
-    let pass1_mode = if is_dark_bg {
-        ContrastMode::InvertPercentileStretch
+    let (mut best_text, mut best_score) = if is_dark_bg {
+        // Run dark-mode inverted pass and non-inverted pass in parallel to nearly halve latency
+        // while keeping full accuracy across mixed dark/bright UI regions.
+        std::thread::scope(|s| {
+            let h1 = s.spawn(|| {
+                run_single_ocr_pass(decoded, ContrastMode::InvertPercentileStretch, engine_max_dim)
+            });
+            let h2 = s.spawn(|| run_single_ocr_pass(decoded, ContrastMode::None, engine_max_dim));
+            let r1 = h1
+                .join()
+                .map_err(|_| OcrError::WinRt("OCR pass 1 thread panicked".to_string()))?;
+            let r2 = h2
+                .join()
+                .map_err(|_| OcrError::WinRt("OCR pass 2 thread panicked".to_string()))?;
+            match (r1, r2) {
+                (Ok((t1, s1)), Ok((t2, s2))) => {
+                    if s2 > s1 {
+                        Ok((t2, s2))
+                    } else {
+                        Ok((t1, s1))
+                    }
+                }
+                (Ok(ok), Err(_)) | (Err(_), Ok(ok)) => Ok(ok),
+                (Err(err), Err(_)) => Err(err),
+            }
+        })?
     } else {
-        ContrastMode::None
+        run_single_ocr_pass(decoded, ContrastMode::None, engine_max_dim)?
     };
-    let primary_img = preprocess_for_ocr(&decoded, pass1_mode, engine_max_dim);
-    let primary_bmp = rgba_to_software_bitmap(&primary_img)?;
-    let (mut best_text, mut best_score) = run_engines_best(&engines, &primary_bmp);
-
-    // Pass 2: For dark-mode UI screenshots (which often mix dark panes, bright badges,
-    // syntax-highlighted code, and subtle borders), always compare against a non-inverted pass
-    // and keep whichever captures more complete text.
-    if is_dark_bg {
-        let alt_img = preprocess_for_ocr(&decoded, ContrastMode::None, engine_max_dim);
-        let alt_bmp = rgba_to_software_bitmap(&alt_img)?;
-        let (alt_text, alt_score) = run_engines_best(&engines, &alt_bmp);
-        if alt_score > best_score {
-            best_text = alt_text;
-            best_score = alt_score;
-        }
-    }
 
     // Pass 3: If low-contrast tiny text (e.g. muted #757575 gray Spotify credits on #181818)
     // still yielded little/no text, run high-contrast Otsu binarized fallback.
     if best_score < 12 {
-        let otsu_img = preprocess_for_ocr(
-            &decoded,
+        let (otsu_text, otsu_score) = run_single_ocr_pass(
+            decoded,
             ContrastMode::BinarizeOtsu { invert: is_dark_bg },
             engine_max_dim,
-        );
-        let otsu_bmp = rgba_to_software_bitmap(&otsu_img)?;
-        let (otsu_text, otsu_score) = run_engines_best(&engines, &otsu_bmp);
+        )?;
         if otsu_score > best_score {
             best_text = otsu_text;
             best_score = otsu_score;
@@ -401,8 +432,7 @@ pub fn extract_text_from_png(png_bytes: &[u8]) -> Result<String, OcrError> {
     }
 
     log::info!(
-        "OCR finished (dark_bg={is_dark_bg}, engines={}, score={best_score}, chars={})",
-        engines.len(),
+        "OCR finished (dark_bg={is_dark_bg}, score={best_score}, chars={})",
         best_text.chars().count()
     );
     Ok(best_text)

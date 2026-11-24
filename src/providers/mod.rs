@@ -1,12 +1,15 @@
 pub mod byok_ai;
 pub mod free_translate;
+pub mod stream;
 
 use crate::config::{AiProviderKind, AppConfig, ProviderMode};
 use std::future::Future;
 use std::pin::Pin;
 use thiserror::Error;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+use std::sync::Arc;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SnipAction {
     Translate,
     ExplainCode,
@@ -14,9 +17,39 @@ pub enum SnipAction {
 
 #[derive(Debug, Clone)]
 pub struct SnipInput {
-    pub png_bytes: Vec<u8>,
+    pub image_bytes: Vec<u8>,
+    pub image_mime: &'static str,
+    pub precomputed_ocr: Option<String>,
     pub action: SnipAction,
     pub target_language: String,
+}
+
+impl SnipInput {
+    #[cfg(test)]
+    pub fn from_png(png_bytes: Vec<u8>, action: SnipAction, target_language: String) -> Self {
+        Self {
+            image_bytes: png_bytes,
+            image_mime: "image/png",
+            precomputed_ocr: None,
+            action,
+            target_language,
+        }
+    }
+
+    pub fn from_jpeg(
+        jpeg_bytes: Vec<u8>,
+        precomputed_ocr: Option<String>,
+        action: SnipAction,
+        target_language: String,
+    ) -> Self {
+        Self {
+            image_bytes: jpeg_bytes,
+            image_mime: "image/jpeg",
+            precomputed_ocr,
+            action,
+            target_language,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,7 +62,7 @@ pub struct SnipOutput {
     pub is_markdown: bool,
 }
 
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum SnipError {
     #[error("No text detected")]
     NoTextDetected,
@@ -49,9 +82,19 @@ pub enum ProviderKind {
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
+pub type DeltaCallback = Arc<dyn Fn(&str) + Send + Sync>;
+
 pub trait SnipProvider: Send + Sync {
     fn name(&self) -> &'static str;
     fn process<'a>(&'a self, input: SnipInput) -> BoxFuture<'a, Result<SnipOutput, SnipError>>;
+    fn process_streaming<'a>(
+        &'a self,
+        input: SnipInput,
+        on_delta: DeltaCallback,
+    ) -> BoxFuture<'a, Result<SnipOutput, SnipError>> {
+        let _ = on_delta;
+        self.process(input)
+    }
 }
 
 /// Determines which provider should handle a snip based on user config and requested action.
@@ -83,7 +126,9 @@ pub fn select_provider(
 
 pub fn build_http_client() -> reqwest::Client {
     reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(20))
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(45))
+        .tcp_nodelay(true)
         .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
         .build()
         .unwrap_or_else(|_| reqwest::Client::new())

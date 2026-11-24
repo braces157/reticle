@@ -92,6 +92,10 @@ impl AiProviderConfig {
     }
 }
 
+fn default_speculative_prefetch() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppConfig {
@@ -102,6 +106,10 @@ pub struct AppConfig {
     pub save_dir: Option<String>,
     pub target_language: String,
     pub mode: ProviderMode,
+    /// Pre-run OCR + Translate + Explain in the background right after a snip box settles
+    /// so clicking any action displays instantly or joins an already-streaming response.
+    #[serde(default = "default_speculative_prefetch")]
+    pub speculative_prefetch: bool,
     pub ai_provider: AiProviderConfig,
 }
 
@@ -113,6 +121,7 @@ impl Default for AppConfig {
             save_dir: None,
             target_language: DEFAULT_TARGET_LANGUAGE.to_string(),
             mode: ProviderMode::Free,
+            speculative_prefetch: true,
             ai_provider: AiProviderConfig::default(),
         }
     }
@@ -258,6 +267,14 @@ mod tests {
         assert_eq!(cfg.target_language, "vi");
         assert_eq!(cfg.mode, ProviderMode::Free);
         assert_eq!(cfg.ai_provider.provider, AiProviderKind::Gemini);
+        assert!(cfg.speculative_prefetch);
+    }
+
+    #[test]
+    fn parses_speculative_prefetch_toggle() {
+        let raw = r#"{ "speculative_prefetch": false }"#;
+        let cfg = AppConfig::from_json_str(raw).expect("parse toggle");
+        assert!(!cfg.speculative_prefetch);
     }
 
     #[test]

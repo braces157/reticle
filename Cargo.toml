@@ -13,7 +13,7 @@ eframe = { version = "0.37", default-features = false, features = ["default_font
 egui = "0.37"
 egui_commonmark = { version = "0.26", default-features = false, features = ["pulldown_cmark", "better_syntax_highlighting"] }
 global-hotkey = "0.10"
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 log = "0.4"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "charset", "http2", "system-proxy"] }
 serde = { version = "1.0", features = ["derive"] }

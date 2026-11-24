@@ -24,7 +24,8 @@ Reticle is a single-binary, system-tray screenshot and screen-reading utility fo
 - **Instant Zero-Flash Capture:** Multi-monitor HiDPI Win32 `BitBlt` capture with DWM window cloaking (`DWMWA_CLOAK`) so the overlay reveals only after the first GPU frame is swapped.
 - **Full Snip & Annotate Workflow:** Drag, move, resize with 8 precision handles, or nudge by `1px`/`10px`; annotate with Rectangle, Arrow, Pen, Highlighter, irreversible Mosaic pixelation, and inline Text with Undo/Redo.
 - **Floating Always-on-Top Pins:** Pin any crop as a borderless floating window (`show_viewport_deferred`) with mouse-wheel zoom, `Shift+Wheel` opacity, hover close, and right-click OCR/Translate/Copy/Save actions.
-- **Offline `Windows.Media.Ocr` + Full OCR Viewer:** Automatic `2x–4x` upscaling and dual-pass dark-mode contrast handling; auto-copies 100% of extracted text and opens a scrollable, side-docked OCR viewer beside your selection.
+- **Offline `Windows.Media.Ocr` + Full OCR Viewer:** Direct-RGBA parallel dark-mode passes (`2x–4x` upscaling, zero PNG roundtrip); pre-runs automatically as soon as your selection settles so clicking **OCR** is instant.
+- **Speculative Prefetch & Live SSE Streaming:** Pre-warms local OCR, Translate, and Explain Code in the background right after mouse-up (`speculative_prefetch: true`, aborts immediately if you adjust, copy, pin, or cancel). Clicking an action displays instantly from cache or attaches live to the in-flight OpenAI/OpenRouter/Gemini SSE stream, sending compact downscaled JPEGs (`<= 1280px`) instead of raw PNGs.
 - **Free Translate & BYOK Vision AI:** Works out of the box with zero API keys (Windows OCR + free translation fallback chain), or configure **Gemini**, **OpenAI**, or any OpenAI-compatible endpoint (such as **OpenRouter**) for layout-aware translation and Markdown **Explain Code**.
 - **Precision Obsidian UI:** Quiet dark chrome, inverted-ink capsule CTAs, side-docked popovers (automatically placed right or left of your snip), and native Windows 11 DWM rounded corners.
 
@@ -56,6 +57,7 @@ Reticle stores its settings in `%APPDATA%\reticle\config.json` (and automaticall
   "save_dir": null,
   "target_language": "en",
   "mode": "free",
+  "speculative_prefetch": true,
   "ai_provider": {
     "provider": "openai",
     "api_key": "",
@@ -66,6 +68,7 @@ Reticle stores its settings in `%APPDATA%\reticle\config.json` (and automaticall
 ```
 
 - Set `"mode": "byok"` and provide your own `"api_key"` for `"gemini"` or `"openai"` (set `"base_url": "https://openrouter.ai/api/v1"` for OpenRouter or any OpenAI-compatible provider).
+- Set `"speculative_prefetch": false` if you use a paid per-token API key and only want AI requests to fire after you explicitly click **Translate** or **Explain** (offline local pre-OCR and SSE streaming remain active).
 - Never commit your personal `config.json` or API keys.
 
 ## Real Image Test Suite
@@ -117,12 +120,13 @@ npm run build
 
 ## Architecture
 
-- [`src/capture/`](src/capture/) — Multi-monitor Win32 `BitBlt` virtual desktop capture, cropping, and PNG encoding
+- [`src/capture/`](src/capture/) — Multi-monitor Win32 `BitBlt` virtual desktop capture, cropping, PNG export, and downscaled vision JPEG encoding
 - [`src/snip/`](src/snip/) — DWM-cloaked full-screen overlay, floating HUD toolbar, annotation model, and CPU rasterizer
 - [`src/pin/`](src/pin/) — Deferred-viewport always-on-top pinned screenshot windows
-- [`src/ocr.rs`](src/ocr.rs) — Multi-pass `Windows.Media.Ocr` pipeline (`2x–4x` upscaling, dark-mode dual-pass comparison, Otsu fallback)
-- [`src/providers/`](src/providers/) — Free translation fallback chain and BYOK Gemini / OpenAI-compatible vision client
-- [`src/ui/`](src/ui/) — Obsidian `egui` popover, side-docked monitor placement, system tray, and global hotkey pump
+- [`src/ocr.rs`](src/ocr.rs) — Direct-RGBA parallel `Windows.Media.Ocr` pipeline (`2x–4x` upscaling, concurrent dark-mode dual-pass comparison, Otsu fallback)
+- [`src/prefetch.rs`](src/prefetch.rs) — Debounced selection-settle speculative prefetcher, live-stream subscriber joining, and instant per-region cache
+- [`src/providers/`](src/providers/) — Free translation fallback chain, SSE streaming parser, and BYOK Gemini / OpenAI-compatible vision client
+- [`src/ui/`](src/ui/) — Obsidian `egui` popover with live streaming view, side-docked monitor placement, system tray, and global hotkey pump
 - [`website/`](website/) — Interactive Vite + TypeScript + Tailwind product site
 
 ## License

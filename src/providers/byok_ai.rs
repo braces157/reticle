@@ -1,6 +1,9 @@
 use crate::config::{AiProviderConfig, AiProviderKind};
 use crate::ocr;
-use crate::providers::{BoxFuture, SnipAction, SnipError, SnipInput, SnipOutput, SnipProvider};
+use crate::providers::stream::{consume_sse_or_json, SseProviderKind};
+use crate::providers::{
+    BoxFuture, DeltaCallback, SnipAction, SnipError, SnipInput, SnipOutput, SnipProvider,
+};
 use base64::Engine;
 use serde_json::{json, Value};
 
@@ -27,32 +30,42 @@ impl ByokAiProvider {
     fn build_prompt(action: SnipAction, target_language: &str) -> String {
         match action {
             SnipAction::Translate => format!(
-                "You are a precise, layout-aware OCR and translation assistant. \
-                 Read all visible text from the image and translate it cleanly into `{target_language}`. \
-                 Preserve paragraphs, lists, and code snippets where appropriate. \
-                 If the image contains no readable text at all, respond with exactly `NO_TEXT_DETECTED`."
+                "Translate all visible text in the image cleanly into `{target_language}`. \
+                 Output only the translation, preserving layout/lists/code identifiers. \
+                 If there is no readable text, reply exactly `NO_TEXT_DETECTED`."
             ),
             SnipAction::ExplainCode => format!(
                 "You are a concise senior software engineer. \
-                 Read the code or technical content shown in the image and explain it clearly in `{target_language}` using GitHub-flavored Markdown. \
-                 Include: (1) a one-sentence summary, (2) a clean fenced code block of the transcribed code if helpful, \
-                 (3) step-by-step explanation of key logic, and (4) notable edge cases or potential bugs. \
-                 If there is no readable code or text in the image, respond with exactly `NO_TEXT_DETECTED`."
+                 Explain the code or technical content in the image in `{target_language}` using compact GitHub-flavored Markdown: \
+                 (1) 1-sentence summary, (2) bullet breakdown of key logic (quote short snippets only if needed; do not retype the whole screenshot), \
+                 (3) notable edge cases or bugs. \
+                 If there is no readable code or text, reply exactly `NO_TEXT_DETECTED`."
             ),
         }
     }
 
-    async fn call_gemini(&self, png_b64: &str, prompt: &str) -> Result<String, String> {
+    async fn call_gemini_stream(
+        &self,
+        image_b64: &str,
+        image_mime: &str,
+        prompt: &str,
+        on_delta: Option<&DeltaCallback>,
+    ) -> Result<String, String> {
         let model = self.config.effective_model();
-        let url = format!("{GEMINI_API_BASE_URL}/{model}:generateContent");
+        let streaming = on_delta.is_some();
+        let url = if streaming {
+            format!("{GEMINI_API_BASE_URL}/{model}:streamGenerateContent?alt=sse")
+        } else {
+            format!("{GEMINI_API_BASE_URL}/{model}:generateContent")
+        };
         let body = json!({
             "contents": [{
                 "parts": [
                     { "text": prompt },
                     {
                         "inline_data": {
-                            "mime_type": "image/png",
-                            "data": png_b64
+                            "mime_type": image_mime,
+                            "data": image_b64
                         }
                     }
                 ]
@@ -69,20 +82,33 @@ impl ByokAiProvider {
             .map_err(|e| format!("network error: {e}"))?;
 
         let status = response.status();
-        let text = response
-            .text()
-            .await
-            .map_err(|e| format!("failed to read Gemini response: {e}"))?;
-
         if !status.is_success() {
+            let text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| format!("HTTP {status}"));
             let detail = extract_api_error(&text).unwrap_or_else(|| format!("HTTP {status}"));
             return Err(format!("Gemini API error ({status}): {detail}"));
         }
 
-        parse_gemini_response(&text)
+        if let Some(cb) = on_delta {
+            consume_sse_or_json(response, SseProviderKind::Gemini, cb.as_ref()).await
+        } else {
+            let text = response
+                .text()
+                .await
+                .map_err(|e| format!("failed to read Gemini response: {e}"))?;
+            parse_gemini_response(&text)
+        }
     }
 
-    async fn call_openai(&self, png_b64: &str, prompt: &str) -> Result<String, String> {
+    async fn call_openai_stream(
+        &self,
+        image_b64: &str,
+        image_mime: &str,
+        prompt: &str,
+        on_delta: Option<&DeltaCallback>,
+    ) -> Result<String, String> {
         let base = self
             .config
             .base_url
@@ -92,7 +118,15 @@ impl ByokAiProvider {
             .unwrap_or(DEFAULT_OPENAI_BASE_URL)
             .trim_end_matches('/');
         let url = format!("{base}/chat/completions");
-        let body = build_openai_request_body(base, self.config.effective_model(), prompt, png_b64);
+        let streaming = on_delta.is_some();
+        let body = build_openai_request_body(
+            base,
+            self.config.effective_model(),
+            prompt,
+            image_b64,
+            image_mime,
+            streaming,
+        );
 
         let response = self
             .http
@@ -104,17 +138,105 @@ impl ByokAiProvider {
             .map_err(|e| format!("network error: {e}"))?;
 
         let status = response.status();
-        let text = response
-            .text()
-            .await
-            .map_err(|e| format!("failed to read OpenAI response: {e}"))?;
-
         if !status.is_success() {
+            let text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| format!("HTTP {status}"));
             let detail = extract_api_error(&text).unwrap_or_else(|| format!("HTTP {status}"));
             return Err(format!("OpenAI API error ({status}): {detail}"));
         }
 
-        parse_openai_response(&text)
+        if let Some(cb) = on_delta {
+            consume_sse_or_json(response, SseProviderKind::OpenAi, cb.as_ref()).await
+        } else {
+            let text = response
+                .text()
+                .await
+                .map_err(|e| format!("failed to read OpenAI response: {e}"))?;
+            parse_openai_response(&text)
+        }
+    }
+
+    async fn run_request(
+        &self,
+        input: SnipInput,
+        on_delta: Option<DeltaCallback>,
+    ) -> Result<SnipOutput, SnipError> {
+        let image_b64 = base64::engine::general_purpose::STANDARD.encode(&input.image_bytes);
+        let prompt = Self::build_prompt(input.action, &input.target_language);
+
+        let precomputed_ocr = input
+            .precomputed_ocr
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+
+        // Only spawn background PNG OCR if we weren't already given precomputed OCR text.
+        // Never block AI streaming on OCR completion when precomputed text is already available.
+        let ocr_handle = if precomputed_ocr.is_none() && input.image_mime == "image/png" {
+            let ocr_png = input.image_bytes;
+            Some(tokio::task::spawn_blocking(move || {
+                ocr::extract_text_from_png(&ocr_png)
+            }))
+        } else {
+            None
+        };
+
+        let ai_res = match self.config.provider {
+            AiProviderKind::Gemini => {
+                self.call_gemini_stream(&image_b64, input.image_mime, &prompt, on_delta.as_ref())
+                    .await
+            }
+            AiProviderKind::OpenAi => {
+                self.call_openai_stream(&image_b64, input.image_mime, &prompt, on_delta.as_ref())
+                    .await
+            }
+        };
+
+        let ocr_text = if precomputed_ocr.is_some() {
+            precomputed_ocr
+        } else if let Some(handle) = ocr_handle {
+            handle
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+        } else {
+            None
+        };
+
+        match ai_res {
+            Ok(content) => {
+                let trimmed = content.trim();
+                if trimmed.eq_ignore_ascii_case("NO_TEXT_DETECTED") && ocr_text.is_none() {
+                    return Err(SnipError::NoTextDetected);
+                }
+                Ok(SnipOutput {
+                    primary_text: trimmed.to_string(),
+                    original_text: ocr_text,
+                    detected_language: None,
+                    provider_label: self.label(),
+                    warning: None,
+                    is_markdown: input.action == SnipAction::ExplainCode,
+                })
+            }
+            Err(err) => {
+                log::warn!("BYOK AI provider failed: {err}");
+                if let Some(raw_ocr) = ocr_text {
+                    Ok(SnipOutput {
+                        primary_text: String::new(),
+                        original_text: Some(raw_ocr),
+                        detected_language: None,
+                        provider_label: self.label(),
+                        warning: Some(format!("{err}. Showing local OCR text below.")),
+                        is_markdown: false,
+                    })
+                } else {
+                    Err(SnipError::ProviderFailed(err))
+                }
+            }
+        }
     }
 }
 
@@ -127,60 +249,15 @@ impl SnipProvider for ByokAiProvider {
     }
 
     fn process<'a>(&'a self, input: SnipInput) -> BoxFuture<'a, Result<SnipOutput, SnipError>> {
-        Box::pin(async move {
-            let png_b64 = base64::engine::general_purpose::STANDARD.encode(&input.png_bytes);
-            let prompt = Self::build_prompt(input.action, &input.target_language);
+        Box::pin(async move { self.run_request(input, None).await })
+    }
 
-            // Run local Windows OCR concurrently so we have original text for the collapsible drawer
-            // and a clean fallback if the remote AI call fails.
-            let ocr_png = input.png_bytes;
-            let ocr_fut = tokio::task::spawn_blocking(move || ocr::extract_text_from_png(&ocr_png));
-            let ai_fut = async {
-                match self.config.provider {
-                    AiProviderKind::Gemini => self.call_gemini(&png_b64, &prompt).await,
-                    AiProviderKind::OpenAi => self.call_openai(&png_b64, &prompt).await,
-                }
-            };
-
-            let (ocr_res, ai_res) = tokio::join!(ocr_fut, ai_fut);
-            let ocr_text = ocr_res
-                .ok()
-                .and_then(Result::ok)
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty());
-
-            match ai_res {
-                Ok(content) => {
-                    let trimmed = content.trim();
-                    if trimmed.eq_ignore_ascii_case("NO_TEXT_DETECTED") && ocr_text.is_none() {
-                        return Err(SnipError::NoTextDetected);
-                    }
-                    Ok(SnipOutput {
-                        primary_text: trimmed.to_string(),
-                        original_text: ocr_text,
-                        detected_language: None,
-                        provider_label: self.label(),
-                        warning: None,
-                        is_markdown: input.action == SnipAction::ExplainCode,
-                    })
-                }
-                Err(err) => {
-                    log::warn!("BYOK AI provider failed: {err}");
-                    if let Some(raw_ocr) = ocr_text {
-                        Ok(SnipOutput {
-                            primary_text: String::new(),
-                            original_text: Some(raw_ocr),
-                            detected_language: None,
-                            provider_label: self.label(),
-                            warning: Some(format!("{err}. Showing local OCR text below.")),
-                            is_markdown: false,
-                        })
-                    } else {
-                        Err(SnipError::ProviderFailed(err))
-                    }
-                }
-            }
-        })
+    fn process_streaming<'a>(
+        &'a self,
+        input: SnipInput,
+        on_delta: DeltaCallback,
+    ) -> BoxFuture<'a, Result<SnipOutput, SnipError>> {
+        Box::pin(async move { self.run_request(input, Some(on_delta)).await })
     }
 }
 
@@ -269,10 +346,18 @@ fn is_openrouter_base_url(base_url: &str) -> bool {
     host == "openrouter.ai" || host.ends_with(".openrouter.ai")
 }
 
-fn build_openai_request_body(base_url: &str, model: &str, prompt: &str, png_b64: &str) -> Value {
-    let data_uri = format!("data:image/png;base64,{png_b64}");
+fn build_openai_request_body(
+    base_url: &str,
+    model: &str,
+    prompt: &str,
+    image_b64: &str,
+    image_mime: &str,
+    stream: bool,
+) -> Value {
+    let data_uri = format!("data:{image_mime};base64,{image_b64}");
     let mut body = json!({
         "model": model,
+        "stream": stream,
         "messages": [{
             "role": "user",
             "content": [
@@ -359,16 +444,26 @@ mod tests {
             "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
             "Translate this",
             "AAAA",
+            "image/jpeg",
+            true,
         );
         assert_eq!(openrouter_body["reasoning"]["enabled"], Value::Bool(false));
+        assert_eq!(openrouter_body["stream"], Value::Bool(true));
+        assert!(openrouter_body["messages"][0]["content"][1]["image_url"]["url"]
+            .as_str()
+            .unwrap()
+            .starts_with("data:image/jpeg;base64,"));
 
         let openai_body = build_openai_request_body(
             DEFAULT_OPENAI_BASE_URL,
             "gpt-4o-mini",
             "Translate this",
             "AAAA",
+            "image/png",
+            false,
         );
         assert!(openai_body.get("reasoning").is_none());
+        assert_eq!(openai_body["stream"], Value::Bool(false));
 
         assert!(!is_openrouter_base_url("https://example.com/openrouter.ai/v1"));
         assert!(is_openrouter_base_url("https://api.openrouter.ai/v1"));

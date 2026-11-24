@@ -84,7 +84,15 @@ pub fn render_popup(app: &mut SnipPopupApp, ui: &mut egui::Ui, ctx: &egui::Conte
             ) {
                 paint_subtle_dot_grid(ui.painter(), ui.max_rect());
             }
-            if matches!(app.content, PopupContent::Loading { .. }) {
+            let is_streaming_bar = matches!(
+                app.content,
+                PopupContent::Loading { .. }
+                    | PopupContent::Result {
+                        is_streaming: true,
+                        ..
+                    }
+            );
+            if is_streaming_bar {
                 render_loading_shimmer(ui);
             } else {
                 draw_hairline(ui);
@@ -382,7 +390,7 @@ fn paint_disclosure_chevron(painter: &egui::Painter, center: Pos2, expanded: boo
 
 fn render_header(app: &mut SnipPopupApp, ui: &mut egui::Ui, ctx: &egui::Context) {
     let detected_lang = match &app.content {
-        PopupContent::Result { output } => output.detected_language.clone(),
+        PopupContent::Result { output, .. } => output.detected_language.clone(),
         _ => None,
     };
 
@@ -475,7 +483,7 @@ fn render_header(app: &mut SnipPopupApp, ui: &mut egui::Ui, ctx: &egui::Context)
                     }
 
                     if app.config.has_byok_key()
-                        && app.last_region.is_some()
+                        && app.last_crop.is_some()
                         && matches!(
                             app.content,
                             PopupContent::Result { .. } | PopupContent::Loading { .. }
@@ -544,7 +552,7 @@ fn render_body(app: &mut SnipPopupApp, ui: &mut egui::Ui, ctx: &egui::Context) -
     let mut fallback_translate = false;
     let mut retry_action: Option<SnipAction> = None;
     let mut dismiss_clicked = false;
-    let has_last_region = app.last_region.is_some();
+    let has_last_region = app.last_crop.is_some();
     let active_action = app.active_action;
 
     Frame::new()
@@ -683,7 +691,7 @@ fn render_body(app: &mut SnipPopupApp, ui: &mut egui::Ui, ctx: &egui::Context) -
                     });
                 measured = Some(scroll_out.inner);
             }
-            PopupContent::Result { output } => {
+            PopupContent::Result { output, .. } => {
                 let output = output.clone();
                 let mut toggle_ocr = false;
 
@@ -879,7 +887,11 @@ fn render_body(app: &mut SnipPopupApp, ui: &mut egui::Ui, ctx: &egui::Context) -
 fn render_footer(app: &mut SnipPopupApp, ui: &mut egui::Ui, ctx: &egui::Context) {
     let is_ocr_view = matches!(app.content, PopupContent::Ocr { .. });
     let provider_label = match &app.content {
-        PopupContent::Result { output } => output.provider_label.to_ascii_uppercase(),
+        PopupContent::Result {
+            output,
+            is_streaming: true,
+        } => format!("STREAMING · {}", output.provider_label.to_ascii_uppercase()),
+        PopupContent::Result { output, .. } => output.provider_label.to_ascii_uppercase(),
         PopupContent::Ocr { .. } => "WINDOWS OCR".to_string(),
         _ => String::new(),
     };
@@ -905,7 +917,7 @@ fn render_footer(app: &mut SnipPopupApp, ui: &mut egui::Ui, ctx: &egui::Context)
                 }
 
                 if is_ocr_view
-                    && app.last_region.is_some()
+                    && app.last_crop.is_some()
                     && action_pill_button(ui, "Translate", false)
                         .on_hover_text("Translate this snipped region")
                         .clicked()

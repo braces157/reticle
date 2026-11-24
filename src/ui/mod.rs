@@ -4,7 +4,7 @@ pub mod theme;
 pub mod tray;
 mod window;
 
-use crate::capture::CapturedRegion;
+use crate::capture::ScreenRect;
 use crate::config::AppConfig;
 use crate::providers::{SnipAction, SnipError, SnipOutput};
 use crate::snip::SnipMode;
@@ -24,8 +24,14 @@ pub enum UiEvent {
     TriggerSnip(SnipMode),
     OcrCopyFinished {
         request_id: u64,
-        region: CapturedRegion,
+        screen_rect: ScreenRect,
         result: Result<String, String>,
+    },
+    ProcessingDelta {
+        request_id: u64,
+        action: SnipAction,
+        provider_label: String,
+        text: String,
     },
     ProcessingFinished {
         request_id: u64,

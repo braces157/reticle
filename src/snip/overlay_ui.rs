@@ -37,6 +37,7 @@ pub enum SnipOverlayResult {
     Completed {
         cropped: CroppedImage,
         command: SnipCommand,
+        doc_revision: u64,
     },
     Cancelled,
 }
@@ -63,6 +64,7 @@ pub struct SnipOverlaySession {
     text_box_rect: Option<Rect>,
 
     doc: AnnotationDoc,
+    doc_revision: u64,
     active_tool: Option<AnnotationTool>,
     active_color: [u8; 4],
     stroke_size: StrokeSize,
@@ -95,12 +97,34 @@ impl SnipOverlaySession {
             toolbar_rect: None,
             text_box_rect: None,
             doc: AnnotationDoc::default(),
+            doc_revision: 0,
             active_tool: None,
             active_color: PALETTE[0],
             stroke_size: StrokeSize::Medium,
             in_progress: None,
             pending_text: None,
         }
+    }
+
+    /// Returns `(rect, doc_revision)` when the selection box is stationary (mouse released,
+    /// not dragging handles, not actively drawing or typing text) — safe to speculatively prefetch.
+    pub fn settled_selection(&self) -> Option<(ScreenRect, u64)> {
+        if let OverlayStage::Adjusting { rect, drag: None } = self.stage
+            && self.in_progress.is_none()
+            && self.pending_text.is_none()
+        {
+            Some((rect, self.doc_revision))
+        } else {
+            None
+        }
+    }
+
+    /// Crops the currently settled selection with any committed annotations composited.
+    pub fn render_settled_crop(&self) -> Option<(CroppedImage, u64)> {
+        let (rect, rev) = self.settled_selection()?;
+        let mut cropped = self.capture.crop_to_rgba(rect).ok()?;
+        composite_annotations(&mut cropped, &self.doc);
+        Some((cropped, rev))
     }
 
     fn base_viewport_builder() -> ViewportBuilder {
@@ -356,10 +380,12 @@ impl SnipOverlaySession {
             ToolbarEvent::Undo => {
                 self.commit_pending_text();
                 self.doc.undo();
+                self.doc_revision = self.doc_revision.wrapping_add(1);
                 None
             }
             ToolbarEvent::Redo => {
                 self.doc.redo();
+                self.doc_revision = self.doc_revision.wrapping_add(1);
                 None
             }
             ToolbarEvent::Command(cmd) => Some(cmd),
@@ -376,6 +402,7 @@ impl SnipOverlaySession {
                     color: self.active_color,
                     font_px: self.stroke_size.font_px(),
                 });
+                self.doc_revision = self.doc_revision.wrapping_add(1);
             }
         }
         self.text_box_rect = None;
@@ -509,10 +536,12 @@ impl SnipOverlaySession {
 
         if ctrl && z && !shift {
             self.doc.undo();
+            self.doc_revision = self.doc_revision.wrapping_add(1);
             return None;
         }
         if ctrl && (y || (z && shift)) {
             self.doc.redo();
+            self.doc_revision = self.doc_revision.wrapping_add(1);
             return None;
         }
         if let Some(tool) = num {
@@ -634,6 +663,7 @@ impl SnipOverlaySession {
             if primary_released || !primary_down {
                 if draft.is_meaningful() {
                     self.doc.push(draft.op);
+                    self.doc_revision = self.doc_revision.wrapping_add(1);
                 }
             } else {
                 self.in_progress = Some(draft);
@@ -759,7 +789,11 @@ impl SnipOverlaySession {
         match self.capture.crop_to_rgba(rect) {
             Ok(mut cropped) => {
                 composite_annotations(&mut cropped, &self.doc);
-                SnipOverlayResult::Completed { cropped, command }
+                SnipOverlayResult::Completed {
+                    cropped,
+                    command,
+                    doc_revision: self.doc_revision,
+                }
             }
             Err(err) => {
                 log::warn!("Ignoring invalid snip crop: {err}");

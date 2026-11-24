@@ -1,5 +1,7 @@
+use image::codecs::jpeg::JpegEncoder;
 use image::codecs::png::PngEncoder;
-use image::{ExtendedColorType, ImageEncoder};
+use image::imageops::{resize, FilterType};
+use image::{ExtendedColorType, ImageEncoder, RgbaImage};
 use thiserror::Error;
 use windows::core::BOOL;
 use windows::Win32::Foundation::{LPARAM, RECT};
@@ -28,7 +30,7 @@ pub enum CaptureError {
     PngEncode(String),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ScreenRect {
     pub x: i32,
     pub y: i32,
@@ -95,12 +97,18 @@ pub struct CroppedImage {
 }
 
 impl CroppedImage {
+    #[cfg(test)]
     pub fn to_captured_region(&self) -> Result<CapturedRegion, CaptureError> {
         let png_bytes = encode_rgba_to_png(self.width, self.height, &self.rgba)?;
         Ok(CapturedRegion {
             png_bytes,
             screen_rect: self.screen_rect,
         })
+    }
+
+    /// Encodes a fast, compact JPEG tailored for vision LLM calls (downscaled <= 1280px).
+    pub fn encode_vision_jpeg(&self) -> Result<Vec<u8>, CaptureError> {
+        encode_rgba_to_vision_jpeg(self.width, self.height, &self.rgba)
     }
 }
 
@@ -113,6 +121,50 @@ pub fn encode_rgba_to_png(width: u32, height: u32, rgba: &[u8]) -> Result<Vec<u8
     Ok(png_bytes)
 }
 
+/// Encodes RGBA pixels into a fast, compact RGB JPEG (quality 82, longest edge <= 1280px)
+/// to cut vision LLM upload bytes and prefill latency by 5-15x vs lossless PNG.
+pub fn encode_rgba_to_vision_jpeg(
+    width: u32,
+    height: u32,
+    rgba: &[u8],
+) -> Result<Vec<u8>, CaptureError> {
+    const MAX_VISION_EDGE: u32 = 1280;
+    const JPEG_QUALITY: u8 = 82;
+
+    let (enc_w, enc_h, rgb): (u32, u32, Vec<u8>) = if width > MAX_VISION_EDGE || height > MAX_VISION_EDGE
+    {
+        let scale = (MAX_VISION_EDGE as f32 / width.max(height) as f32).min(1.0);
+        let target_w = ((width as f32 * scale).round() as u32).max(1);
+        let target_h = ((height as f32 * scale).round() as u32).max(1);
+        let src = RgbaImage::from_raw(width, height, rgba.to_vec())
+            .ok_or_else(|| CaptureError::PngEncode("invalid RGBA buffer length".to_string()))?;
+        let resized = resize(&src, target_w, target_h, FilterType::Triangle);
+        let mut rgb = Vec::with_capacity((target_w as usize) * (target_h as usize) * 3);
+        for px in resized.as_raw().as_chunks::<4>().0 {
+            rgb.push(px[0]);
+            rgb.push(px[1]);
+            rgb.push(px[2]);
+        }
+        (target_w, target_h, rgb)
+    } else {
+        let mut rgb = Vec::with_capacity((width as usize) * (height as usize) * 3);
+        for px in rgba.as_chunks::<4>().0 {
+            rgb.push(px[0]);
+            rgb.push(px[1]);
+            rgb.push(px[2]);
+        }
+        (width, height, rgb)
+    };
+
+    let mut jpeg_bytes = Vec::with_capacity((enc_w as usize * enc_h as usize) / 4);
+    let mut encoder = JpegEncoder::new_with_quality(&mut jpeg_bytes, JPEG_QUALITY);
+    encoder
+        .encode(&rgb, enc_w, enc_h, ExtendedColorType::Rgb8)
+        .map_err(|e| CaptureError::PngEncode(format!("JPEG encode failed: {e}")))?;
+    Ok(jpeg_bytes)
+}
+
+#[cfg(test)]
 #[derive(Debug, Clone)]
 pub struct CapturedRegion {
     pub png_bytes: Vec<u8>,
@@ -473,5 +525,23 @@ mod tests {
             .to_rgba8();
         assert_eq!(decoded.dimensions(), (10, 12));
         assert_eq!(decoded.get_pixel(0, 0).0, [30, 20, 10, 255]);
+    }
+
+    #[test]
+    fn vision_jpeg_downscales_oversized_snips_and_emits_valid_jpeg() {
+        let w = 1920u32;
+        let h = 1080u32;
+        let mut rgba = vec![0u8; (w * h * 4) as usize];
+        for (idx, px) in rgba.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+            px[0] = (idx % 255) as u8;
+            px[1] = 40;
+            px[2] = 90;
+            px[3] = 255;
+        }
+        let jpeg = encode_rgba_to_vision_jpeg(w, h, &rgba).expect("valid vision jpeg");
+        assert!(jpeg.starts_with(&[0xFF, 0xD8, 0xFF]), "must be JPEG");
+        let decoded = image::load_from_memory(&jpeg).expect("decodable jpeg");
+        assert_eq!(decoded.width(), 1280);
+        assert_eq!(decoded.height(), 720);
     }
 }

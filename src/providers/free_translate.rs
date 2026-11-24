@@ -175,12 +175,15 @@ impl SnipProvider for FreeTranslateProvider {
                 ));
             }
 
-            let png_bytes = input.png_bytes;
-            let ocr_text =
-                tokio::task::spawn_blocking(move || ocr::extract_text_from_png(&png_bytes))
+            let ocr_text = if let Some(pre) = input.precomputed_ocr {
+                pre
+            } else {
+                let img_bytes = input.image_bytes;
+                tokio::task::spawn_blocking(move || ocr::extract_text_from_png(&img_bytes))
                     .await
                     .map_err(|e| SnipError::OcrFailed(format!("OCR task panicked: {e}")))?
-                    .map_err(|e| SnipError::OcrFailed(e.to_string()))?;
+                    .map_err(|e| SnipError::OcrFailed(e.to_string()))?
+            };
 
             let trimmed = ocr_text.trim().to_string();
             if trimmed.is_empty() {
@@ -392,11 +395,11 @@ mod tests {
         );
         let blank_png = crate::ocr::tests::render_text_png("", 220, 80);
         let res = provider
-            .process(SnipInput {
-                png_bytes: blank_png,
-                action: SnipAction::Translate,
-                target_language: "en".to_string(),
-            })
+            .process(SnipInput::from_png(
+                blank_png,
+                SnipAction::Translate,
+                "en".to_string(),
+            ))
             .await;
         assert_eq!(res, Err(SnipError::NoTextDetected));
     }
@@ -415,11 +418,11 @@ mod tests {
         );
         let text_png = crate::ocr::tests::render_text_png("Hello Rust OCR", 460, 120);
         let output = provider
-            .process(SnipInput {
-                png_bytes: text_png,
-                action: SnipAction::Translate,
-                target_language: "vi".to_string(),
-            })
+            .process(SnipInput::from_png(
+                text_png,
+                SnipAction::Translate,
+                "vi".to_string(),
+            ))
             .await
             .expect("must gracefully return OCR fallback on network error");
 
