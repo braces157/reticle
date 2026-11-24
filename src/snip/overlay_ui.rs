@@ -23,8 +23,11 @@ use windows::Win32::Graphics::Dwm::{
     DwmSetWindowAttribute, DWMWA_CLOAK, DWMWA_TRANSITIONS_FORCEDISABLED,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    FindWindowW, GetWindowRect, SetForegroundWindow, SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE,
-    SWP_NOSENDCHANGING,
+    FindWindowW, GetWindowLongPtrW, GetWindowRect, SetForegroundWindow, SetWindowLongPtrW,
+    SetWindowPos, GWL_EXSTYLE, GWL_STYLE, HWND_TOPMOST, SWP_FRAMECHANGED, SWP_NOACTIVATE,
+    SWP_NOSENDCHANGING, WS_BORDER, WS_CAPTION, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_DLGFRAME,
+    WS_EX_APPWINDOW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUP,
+    WS_SYSMENU, WS_THICKFRAME,
 };
 
 pub const OVERLAY_VIEWPORT_TITLE: &str = "SnipToolOverlayViewport";
@@ -210,6 +213,7 @@ impl SnipOverlaySession {
             let gl_matches = is_gl_canvas_synced(canvas_logical, ppp, b);
 
             if !bounds_match && let Some(hwnd) = hwnd {
+                apply_overlay_tool_popup_style(hwnd);
                 // SAFETY: Sizes our own cloaked overlay viewport in exact physical pixels.
                 // `SWP_NOSENDCHANGING` bypasses `WM_GETMINMAXINFO` single-monitor clamping.
                 unsafe {
@@ -220,7 +224,7 @@ impl SnipOverlaySession {
                         b.y,
                         b.width,
                         b.height,
-                        SWP_NOACTIVATE | SWP_NOSENDCHANGING,
+                        SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOSENDCHANGING,
                     );
                 }
                 let _ = self.sync_window_phys_rect(b);
@@ -907,15 +911,50 @@ fn compute_overlay_uv(window_rect: ScreenRect, capture_bounds: ScreenRect) -> Re
     Rect::from_min_max(Pos2::new(u0, v0), Pos2::new(u1, v1))
 }
 
-/// Cloaks and pre-sizes the overlay HWND before making it visible so DWM never flashes an
-/// unrendered white background while OpenGL uploads the frozen screenshot texture.
+/// Computes Win32 `GWL_STYLE` and `GWL_EXSTYLE` for a true borderless topmost tool overlay
+/// (`WS_POPUP` + `WS_EX_TOOLWINDOW`, no `WS_CAPTION`/`WS_THICKFRAME`/`WS_EX_APPWINDOW`).
+/// This prevents Windows tiling window managers (GlazeWM, komorebi, FancyZones) and Aero Snap
+/// from hijacking, tiling, or shifting the multi-monitor overlay onto Monitor 1 on Alt+O.
+fn compute_overlay_window_styles(cur_style: u32, cur_ex_style: u32) -> (u32, u32) {
+    let strip_style = WS_CAPTION.0
+        | WS_THICKFRAME.0
+        | WS_MINIMIZEBOX.0
+        | WS_MAXIMIZEBOX.0
+        | WS_SYSMENU.0
+        | WS_BORDER.0
+        | WS_DLGFRAME.0;
+    let new_style = (cur_style & !strip_style) | WS_POPUP.0 | WS_CLIPSIBLINGS.0 | WS_CLIPCHILDREN.0;
+    let new_ex_style =
+        (cur_ex_style & !WS_EX_APPWINDOW.0) | WS_EX_TOOLWINDOW.0 | WS_EX_TOPMOST.0;
+    (new_style, new_ex_style)
+}
+
+fn apply_overlay_tool_popup_style(hwnd: windows::Win32::Foundation::HWND) {
+    // SAFETY: Updates window styles on our own uniquely titled overlay HWND so tiling WMs
+    // treat it as an unmanaged fullscreen overlay rather than a tileable application window.
+    unsafe {
+        let cur_style = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32;
+        let cur_ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
+        let (new_style, new_ex_style) = compute_overlay_window_styles(cur_style, cur_ex_style);
+        if new_style != cur_style {
+            let _ = SetWindowLongPtrW(hwnd, GWL_STYLE, new_style as isize);
+        }
+        if new_ex_style != cur_ex_style {
+            let _ = SetWindowLongPtrW(hwnd, GWL_EXSTYLE, new_ex_style as isize);
+        }
+    }
+}
+
+/// Cloaks, applies unmanaged tool-popup styles, and pre-sizes the overlay HWND before making it
+/// visible so neither DWM nor tiling WMs (GlazeWM/komorebi) flash or shift it on Alt+O.
 pub fn prepare_overlay_window_cloaked(bounds: ScreenRect) {
     set_overlay_cloaked(true);
-    // SAFETY: Sizes our own uniquely titled overlay viewport while cloaked.
+    // SAFETY: Configures styles and physical bounds on our own overlay viewport while cloaked.
     unsafe {
         if let Ok(hwnd) = FindWindowW(None, w!("SnipToolOverlayViewport"))
             && !hwnd.is_invalid()
         {
+            apply_overlay_tool_popup_style(hwnd);
             let _ = SetWindowPos(
                 hwnd,
                 Some(HWND_TOPMOST),
@@ -923,7 +962,7 @@ pub fn prepare_overlay_window_cloaked(bounds: ScreenRect) {
                 bounds.y,
                 bounds.width,
                 bounds.height,
-                SWP_NOACTIVATE | SWP_NOSENDCHANGING,
+                SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOSENDCHANGING,
             );
         }
     }
@@ -996,6 +1035,22 @@ mod tests {
         let stale_primary = Rect::from_min_size(Pos2::ZERO, Vec2::new(2880.0 / 1.75, 1800.0 / 1.75));
         assert!(!is_gl_canvas_synced(stale_primary, 1.25, expected));
         assert!(!is_gl_canvas_synced(stale_primary, 1.75, expected));
+    }
+
+    #[test]
+    fn overlay_styles_mark_tool_popup_and_strip_tileable_overlapped_flags() {
+        let winit_default_style =
+            WS_CAPTION.0 | WS_THICKFRAME.0 | WS_SYSMENU.0 | WS_MINIMIZEBOX.0 | WS_MAXIMIZEBOX.0;
+        let winit_default_ex = WS_EX_APPWINDOW.0;
+
+        let (style, ex) = compute_overlay_window_styles(winit_default_style, winit_default_ex);
+        assert_ne!(style & WS_POPUP.0, 0, "must set WS_POPUP");
+        assert_eq!(style & WS_CAPTION.0, 0, "must clear WS_CAPTION");
+        assert_eq!(style & WS_THICKFRAME.0, 0, "must clear WS_THICKFRAME");
+        assert_eq!(style & WS_SYSMENU.0, 0, "must clear WS_SYSMENU");
+        assert_ne!(ex & WS_EX_TOOLWINDOW.0, 0, "must set WS_EX_TOOLWINDOW");
+        assert_ne!(ex & WS_EX_TOPMOST.0, 0, "must set WS_EX_TOPMOST");
+        assert_eq!(ex & WS_EX_APPWINDOW.0, 0, "must clear WS_EX_APPWINDOW");
     }
 
     #[test]
